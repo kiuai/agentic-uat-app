@@ -103,6 +103,52 @@ async def delete_script(
     await service.delete_script(script_id, str(project_id))
 
 
+@router.get(
+    "/{script_id}/content",
+    response_model=dict[str, str],
+    dependencies=[Depends(RequirePermission(Permission.SCRIPT_READ))],
+    summary="Return all script bodies keyed by format",
+)
+async def get_script_content(
+    project_id: uuid.UUID,
+    script_id: str,
+    cosmos: CosmosDep,
+) -> dict[str, str]:
+    from azure.cosmos.exceptions import CosmosResourceNotFoundError
+    from fastapi import HTTPException
+    try:
+        doc = await cosmos.read_item(item=script_id, partition_key=str(project_id))
+    except CosmosResourceNotFoundError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Script not found.")
+    return {k: v for k, v in doc.get("scripts", {}).items() if isinstance(v, str)}
+
+
+@router.get(
+    "/{script_id}/versions",
+    summary="Return version history entries for a script",
+)
+async def get_script_versions(
+    project_id: uuid.UUID,
+    script_id: str,
+    cosmos: CosmosDep,
+) -> list[dict]:
+    from azure.cosmos.exceptions import CosmosResourceNotFoundError
+    from fastapi import HTTPException
+    try:
+        doc = await cosmos.read_item(item=script_id, partition_key=str(project_id))
+    except CosmosResourceNotFoundError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Script not found.")
+    current = {
+        "version_number": doc.get("version", 1),
+        "change_summary": None,
+        "is_ai_generated": doc.get("source_job_id") is not None,
+        "created_by": doc.get("created_by"),
+        "created_at": doc.get("updated_at", doc.get("created_at")),
+    }
+    history = doc.get("version_history", [])
+    return [current, *history]
+
+
 @router.post(
     "/{script_id}/submit-review",
     response_model=TestScriptRead,

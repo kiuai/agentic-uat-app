@@ -2,16 +2,19 @@
 
 export type UserRole = "GADM" | "EADM" | "CADM" | "SM" | "VL" | "QA" | "VT" | "BPO";
 
+// RoleAssignmentOut shape returned by /auth/me
 export interface RoleAssignment {
-  id: string;
-  user_id: string;
-  tenant_id: string;
   role: UserRole;
+  tenant_id: string;
   domain_code: string | null;
-  assigned_by: string | null;
-  created_at: string;
+  // Present in full DB responses but absent from /auth/me
+  id?: string;
+  user_id?: string;
+  assigned_by?: string | null;
+  created_at?: string;
 }
 
+// UserProfileOut returned by GET /api/v1/auth/me
 export interface User {
   id: string;
   azure_oid: string;
@@ -20,9 +23,23 @@ export interface User {
   is_active: boolean;
   is_global_admin: boolean;
   last_login_at: string | null;
-  created_at: string;
-  updated_at: string;
   roles: RoleAssignment[];
+  /** Permission strings already resolved by the backend */
+  permissions: string[];
+  // Optional — present in full DB read but not in /auth/me
+  created_at?: string;
+  updated_at?: string;
+}
+
+// TenantOut returned by GET /api/v1/auth/tenants
+export interface TenantOut {
+  company_id: string;
+  tenant_id: string;
+  company_name: string;
+  company_slug: string;
+  enterprise_id: string;
+  enterprise_name: string;
+  roles: string[];
 }
 
 // Tenant structures
@@ -186,14 +203,15 @@ export interface TestScript {
 }
 
 export interface TestScriptVersion {
-  id: string;
-  script_id: string;
   version_number: number;
-  cosmos_doc_id: string;
   change_summary: string | null;
   is_ai_generated: boolean;
-  created_by: string;
+  created_by: string | null;
   created_at: string;
+  // Present in DB-backed responses only
+  id?: string;
+  script_id?: string;
+  cosmos_doc_id?: string;
 }
 
 export interface ScriptExport {

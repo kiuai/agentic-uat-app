@@ -89,28 +89,32 @@ interface AuthState {
   currentUser: User | null;
   tenantId: string | null;
   companySlug: string | null;
-  /** Effective permissions union for all roles the user holds in current tenant */
-  permissions: Set<Permission>;
+  /** Effective permissions — union of backend-provided list + local computation */
+  permissions: Set<string>;
 
   setCurrentUser: (user: User | null) => void;
   setTenantId: (id: string | null) => void;
   setCompanySlug: (slug: string | null) => void;
   hasPermission: (permission: string) => boolean;
-  /** Compute permissions from the user's RoleAssignment list */
   refreshPermissions: () => void;
 }
 
-function computePermissions(user: User | null, tenantId: string | null): Set<Permission> {
+function computePermissions(user: User | null, tenantId: string | null): Set<string> {
   if (!user) return new Set();
 
-  // Collect all roles (tenant-scoped or global admin)
+  // Prefer backend-provided permissions list (already resolved)
+  if (user.permissions?.length) {
+    return new Set(user.permissions);
+  }
+
+  // Fallback: compute locally from roles
   const roles = user.is_global_admin
     ? (["GADM"] as UserRole[])
     : user.roles
         .filter((ra) => !tenantId || ra.tenant_id === tenantId)
         .map((ra) => ra.role);
 
-  const perms = new Set<Permission>();
+  const perms = new Set<string>();
   for (const role of roles) {
     for (const p of ROLE_PERMISSIONS[role] ?? []) {
       perms.add(p);

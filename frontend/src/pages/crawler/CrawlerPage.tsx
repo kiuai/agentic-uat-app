@@ -3,17 +3,15 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { useState } from "react";
 import { Globe, Loader2, RefreshCw, X } from "lucide-react";
-import { apiGet, apiPost, apiDelete } from "@/services/api";
+import { apiGet, apiPost } from "@/services/api";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { RoleGate } from "@/components/ui/RoleGate";
 import { usePolling } from "@/hooks/usePolling";
 import type { CrawlJob } from "@/types";
 
 const schema = z.object({
-  start_url: z.string().url("Enter a valid URL"),
-  max_depth: z.coerce.number().int().min(1).max(10).default(3),
+  target_url: z.string().url("Enter a valid URL"),
   max_pages: z.coerce.number().int().min(1).max(500).default(50),
 });
 
@@ -21,7 +19,6 @@ type FormData = z.infer<typeof schema>;
 
 function JobRow({
   job,
-  projectId,
   onCancel,
 }: {
   job: CrawlJob;
@@ -70,11 +67,8 @@ export function CrawlerPage() {
     staleTime: 10_000,
   });
 
-  const hasActiveJobs = jobs?.some((j) =>
-    ["PENDING", "PROCESSING"].includes(j.status)
-  );
+  const hasActiveJobs = jobs?.some((j) => ["PENDING", "PROCESSING"].includes(j.status));
 
-  // Poll while any job is active
   usePolling(() => refetch(), {
     interval: 3000,
     enabled: !!hasActiveJobs,
@@ -82,21 +76,27 @@ export function CrawlerPage() {
 
   const { register, handleSubmit, formState: { errors }, reset } = useForm<FormData>({
     resolver: zodResolver(schema),
-    defaultValues: { max_depth: 3, max_pages: 50 },
+    defaultValues: { max_pages: 50 },
   });
 
   const trigger = useMutation({
     mutationFn: (data: FormData) =>
-      apiPost<CrawlJob>(`/api/v1/projects/${projectId}/crawl-jobs`, data),
+      apiPost<CrawlJob>(`/api/v1/projects/${projectId}/crawl`, {
+        target_url: data.target_url,
+        max_pages: data.max_pages,
+        crawler_type: "WEB",
+        generate_scripts: true,
+      }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["crawler-jobs", projectId] });
       reset();
     },
   });
 
+  // Cancel uses POST /crawl-jobs/{id}/cancel (not DELETE)
   const cancel = useMutation({
     mutationFn: (jobId: string) =>
-      apiDelete(`/api/v1/projects/${projectId}/crawl-jobs/${jobId}`),
+      apiPost(`/api/v1/crawl-jobs/${jobId}/cancel`),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["crawler-jobs", projectId] }),
   });
 
@@ -113,7 +113,6 @@ export function CrawlerPage() {
         </button>
       </div>
 
-      {/* Trigger form */}
       <RoleGate permission="crawler:create">
         <div className="bg-card border rounded-xl p-5">
           <h2 className="font-semibold mb-4 flex items-center gap-2">
@@ -122,38 +121,26 @@ export function CrawlerPage() {
           </h2>
           <form onSubmit={handleSubmit((d) => trigger.mutate(d))} className="space-y-4">
             <div>
-              <label className="block text-sm font-medium mb-1">Start URL *</label>
+              <label className="block text-sm font-medium mb-1">Target URL *</label>
               <input
-                {...register("start_url")}
+                {...register("target_url")}
                 type="url"
                 placeholder="https://app.example.com"
                 className="w-full px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
               />
-              {errors.start_url && (
-                <p className="text-xs text-red-600 mt-1">{errors.start_url.message}</p>
+              {errors.target_url && (
+                <p className="text-xs text-red-600 mt-1">{errors.target_url.message}</p>
               )}
             </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium mb-1">Max Depth</label>
-                <input
-                  {...register("max_depth")}
-                  type="number"
-                  min="1"
-                  max="10"
-                  className="w-full px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium mb-1">Max Pages</label>
-                <input
-                  {...register("max_pages")}
-                  type="number"
-                  min="1"
-                  max="500"
-                  className="w-full px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
-                />
-              </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">Max Pages</label>
+              <input
+                {...register("max_pages")}
+                type="number"
+                min="1"
+                max="500"
+                className="w-32 px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+              />
             </div>
 
             {trigger.isError && <p className="text-xs text-red-600">Failed to start crawl.</p>}
@@ -178,7 +165,6 @@ export function CrawlerPage() {
         </div>
       </RoleGate>
 
-      {/* Jobs list */}
       <div>
         <h2 className="font-semibold mb-3">Crawl History</h2>
         {isLoading ? (

@@ -1,0 +1,108 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # ── Backend ──────────────────────────────────────────────────────────────────
+  backend:
+    name: Backend (lint + type-check + tests)
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: kaats
+          POSTGRES_PASSWORD: kaats
+          POSTGRES_DB: kaats_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql+asyncpg://kaats:kaats@localhost:5432/kaats_test
+      # Dummy values — tests mock external services
+      AZURE_CLIENT_ID: 00000000-0000-0000-0000-000000000000
+      AZURE_TENANT_ID: 00000000-0000-0000-0000-000000000000
+      AZURE_CLIENT_SECRET: dummy
+      AZURE_SQL_SERVER: localhost
+      AZURE_SQL_DATABASE: kaats_test
+      COSMOS_ENDPOINT: https://localhost:8081
+      COSMOS_KEY: dummy
+      SERVICE_BUS_CONNECTION_STRING: "Endpoint=sb://localhost/;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=dummy="
+      AZURE_STORAGE_CONNECTION_STRING: "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OugPAodDl/S1Kl2lMgXMUvQ==;BlobEndpoint=http://localhost:10000/devstoreaccount1;"
+
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Ruff lint
+        run: ruff check .
+
+      - name: Ruff format check
+        run: ruff format --check .
+
+      - name: Mypy
+        run: mypy app --ignore-missing-imports
+
+      - name: Run Alembic migrations
+        run: alembic upgrade head
+
+      - name: Pytest
+        run: pytest tests/ -x -q
+
+  # ── Frontend ─────────────────────────────────────────────────────────────────
+  frontend:
+    name: Frontend (lint + type-check + tests)
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: TypeScript check
+        run: npx tsc --noEmit
+
+      - name: ESLint
+        run: npm run lint
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Build
+        run: npm run build
+        env:
+          VITE_AZURE_CLIENT_ID: 00000000-0000-0000-0000-000000000000
+          VITE_AZURE_TENANT_ID: 00000000-0000-0000-0000-000000000000
+          VITE_API_BASE_URL: http://localhost:8000

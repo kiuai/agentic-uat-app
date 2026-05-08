@@ -1,6 +1,6 @@
 import { useParams, useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useForm } from "react-hook-form";
+import { useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { apiGet, apiPost } from "@/services/api";
@@ -8,7 +8,7 @@ import { ScriptEditor } from "@/components/ui/ScriptEditor";
 import { FileUploadZone } from "@/components/ui/FileUploadZone";
 import apiClient from "@/services/api";
 import type { TestAssignment, TestScript } from "@/types";
-import { useState } from "react";
+import { useState, useId } from "react";
 
 const schema = z.object({
   status: z.enum(["PASSED", "FAILED", "BLOCKED", "SKIPPED"] as const),
@@ -17,6 +17,34 @@ const schema = z.object({
 });
 
 type FormData = z.infer<typeof schema>;
+type ExecutionStatus = "PASSED" | "FAILED" | "BLOCKED" | "SKIPPED";
+
+const RESULT_STYLES: Record<ExecutionStatus, string> = {
+  PASSED: "border-green-400 bg-green-50 text-green-700 dark:bg-green-900/30 dark:text-green-300",
+  FAILED: "border-red-400 bg-red-50 text-red-700 dark:bg-red-900/30 dark:text-red-300",
+  BLOCKED: "border-orange-400 bg-orange-50 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300",
+  SKIPPED: "border-gray-300 bg-gray-50 text-gray-600 dark:bg-gray-800 dark:text-gray-400",
+};
+
+function ResultRadio({
+  value,
+  register,
+  checked,
+}: {
+  value: ExecutionStatus;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  register: any;
+  checked: boolean;
+}) {
+  const baseClass = "border-2 rounded-lg p-2 text-center text-xs font-medium transition-colors";
+  const checkedClass = checked ? RESULT_STYLES[value] : "border-border hover:bg-accent";
+  return (
+    <label className="cursor-pointer">
+      <input {...register("status")} type="radio" value={value} className="sr-only" />
+      <div className={`${baseClass} ${checkedClass}`}>{value}</div>
+    </label>
+  );
+}
 
 export function ExecuteTestPage() {
   const { projectId, cycleId, assignmentId } = useParams<{
@@ -55,10 +83,11 @@ export function ExecuteTestPage() {
     enabled: !!assignment?.script_id,
   });
 
-  const { register, handleSubmit, formState: { errors } } = useForm<FormData>({
+  const { register, handleSubmit, control } = useForm<FormData>({
     resolver: zodResolver(schema),
     defaultValues: { status: "PASSED" },
   });
+  const selectedStatus = useWatch({ control, name: "status" });
 
   const submitResult = useMutation({
     mutationFn: async (data: FormData) => {
@@ -111,22 +140,9 @@ export function ExecuteTestPage() {
         <div>
           <label className="block text-sm font-medium mb-1">Result *</label>
           <div className="grid grid-cols-4 gap-2">
-            {(["PASSED", "FAILED", "BLOCKED", "SKIPPED"] as const).map((s) => {
-              const colors: Record<string, string> = {
-                PASSED: "border-green-400 bg-green-50 text-green-700",
-                FAILED: "border-red-400 bg-red-50 text-red-700",
-                BLOCKED: "border-orange-400 bg-orange-50 text-orange-700",
-                SKIPPED: "border-gray-300 bg-gray-50 text-gray-600",
-              };
-              return (
-                <label key={s} className="cursor-pointer">
-                  <input {...register("status")} type="radio" value={s} className="sr-only peer" />
-                  <div className={`border-2 rounded-lg p-2 text-center text-xs font-medium peer-checked:${colors[s]} transition-colors hover:bg-accent`}>
-                    {s}
-                  </div>
-                </label>
-              );
-            })}
+            {(["PASSED", "FAILED", "BLOCKED", "SKIPPED"] as const).map((s) => (
+              <ResultRadio key={s} value={s} register={register} checked={selectedStatus === s} />
+            ))}
           </div>
         </div>
 

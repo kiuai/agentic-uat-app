@@ -1,4 +1,5 @@
 import { Link, useLocation, useParams } from "react-router-dom";
+import { useAuthStore } from "@/store/authStore";
 import {
   LayoutDashboard,
   FolderKanban,
@@ -44,9 +45,15 @@ function projectNav(projectId: string): NavItem[] {
 
 function NavLink({ item }: { item: NavItem }) {
   const location = useLocation();
+  const currentUser = useAuthStore((s) => s.currentUser);
   const allowed = usePermission(item.permission ?? "project:read");
 
-  // Always show items without permission (like Dashboard)
+  // While user is still loading, show all nav items (avoids flash of empty sidebar)
+  if (item.permission && !currentUser) {
+    return (
+      <div className="h-9 mx-1 rounded-md bg-muted/50 animate-pulse" />
+    );
+  }
   if (item.permission && !allowed) return null;
 
   const active = item.exact

@@ -1,47 +1,56 @@
 import React from "react";
 import { useMsal } from "@azure/msal-react";
 import { useQuery } from "@tanstack/react-query";
-import { LogOut, Sun, Moon, ChevronDown } from "lucide-react";
+import { LogOut, ChevronDown, Building2 } from "lucide-react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { Sidebar } from "./Sidebar";
 import { useAuthStore } from "@/store/authStore";
-import { useCurrentTenant } from "@/hooks/useCurrentTenant";
 import { apiGet } from "@/services/api";
-import type { User } from "@/types";
+import type { User, TenantOut } from "@/types";
 import { cn } from "@/utils/cn";
 
-function TenantSwitcher() {
-  const { tenantId, tenants, setTenantId } = useCurrentTenant();
+function TenantSwitcher({ tenants }: { tenants: TenantOut[] }) {
+  const tenantId = useAuthStore((s) => s.tenantId);
+  const setTenantId = useAuthStore((s) => s.setTenantId);
+  const setCompanySlug = useAuthStore((s) => s.setCompanySlug);
 
   if (tenants.length <= 1) return null;
+
+  const current = tenants.find((t) => t.tenant_id === tenantId);
 
   return (
     <DropdownMenu.Root>
       <DropdownMenu.Trigger asChild>
-        <button className="flex items-center gap-1 px-2 py-1 text-xs rounded-md hover:bg-accent transition-colors">
-          <span className="font-mono truncate max-w-[120px]">
-            {tenantId?.slice(0, 8) ?? "No tenant"}…
+        <button className="flex items-center gap-1.5 px-2 py-1.5 text-xs rounded-md hover:bg-accent transition-colors w-full">
+          <Building2 className="h-3 w-3 shrink-0 text-muted-foreground" />
+          <span className="flex-1 text-left truncate">
+            {current?.company_name ?? "Select tenant"}
           </span>
-          <ChevronDown className="h-3 w-3" />
+          <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" />
         </button>
       </DropdownMenu.Trigger>
       <DropdownMenu.Portal>
         <DropdownMenu.Content
           align="start"
-          className="z-50 min-w-[180px] bg-popover border rounded-md shadow-md p-1 text-sm"
+          sideOffset={4}
+          className="z-50 min-w-[200px] bg-popover border rounded-md shadow-md p-1 text-sm"
         >
-          {tenants.map((tid) => (
+          {tenants.map((t) => (
             <DropdownMenu.Item
-              key={tid}
-              onSelect={() => setTenantId(tid)}
+              key={t.tenant_id}
+              onSelect={() => {
+                setTenantId(t.tenant_id);
+                setCompanySlug(t.company_slug);
+              }}
               className={cn(
-                "px-3 py-2 rounded cursor-pointer outline-none transition-colors",
-                tid === tenantId
-                  ? "bg-primary/10 text-primary font-medium"
+                "flex flex-col px-3 py-2 rounded cursor-pointer outline-none transition-colors",
+                t.tenant_id === tenantId
+                  ? "bg-primary/10 text-primary"
                   : "hover:bg-accent"
               )}
             >
-              <span className="font-mono text-xs">{tid.slice(0, 8)}…</span>
+              <span className="font-medium">{t.company_name}</span>
+              <span className="text-xs text-muted-foreground">{t.enterprise_name}</span>
             </DropdownMenu.Item>
           ))}
         </DropdownMenu.Content>
@@ -67,10 +76,10 @@ function UserMenu() {
     <DropdownMenu.Root>
       <DropdownMenu.Trigger asChild>
         <button className="flex items-center gap-2 px-2 py-1 rounded-md hover:bg-accent transition-colors">
-          <span className="h-7 w-7 rounded-full bg-primary/20 text-primary text-xs font-semibold flex items-center justify-center">
+          <span className="h-7 w-7 rounded-full bg-primary/20 text-primary text-xs font-semibold flex items-center justify-center shrink-0">
             {initials}
           </span>
-          <span className="text-sm hidden sm:block max-w-[120px] truncate">
+          <span className="text-sm hidden sm:block max-w-[140px] truncate">
             {currentUser?.display_name ?? currentUser?.email ?? ""}
           </span>
           <ChevronDown className="h-3 w-3 text-muted-foreground" />
@@ -79,6 +88,7 @@ function UserMenu() {
       <DropdownMenu.Portal>
         <DropdownMenu.Content
           align="end"
+          sideOffset={4}
           className="z-50 min-w-[180px] bg-popover border rounded-md shadow-md p-1 text-sm"
         >
           {currentUser && (
@@ -107,18 +117,36 @@ interface AppShellProps {
 export function AppShell({ children }: AppShellProps) {
   const { accounts } = useMsal();
   const setCurrentUser = useAuthStore((s) => s.setCurrentUser);
+  const setTenantId = useAuthStore((s) => s.setTenantId);
+  const setCompanySlug = useAuthStore((s) => s.setCompanySlug);
   const tenantId = useAuthStore((s) => s.tenantId);
 
-  // Bootstrap current user on mount
+  // Bootstrap current user from /auth/me (includes backend-resolved permissions)
   useQuery({
     queryKey: ["me", accounts[0]?.homeAccountId],
     queryFn: async () => {
-      const user = await apiGet<User>("/api/v1/users/me");
+      const user = await apiGet<User>("/api/v1/auth/me");
       setCurrentUser(user);
       return user;
     },
     enabled: !!accounts.length,
     staleTime: 5 * 60 * 1000,
+  });
+
+  // Fetch tenant list to populate TenantSwitcher
+  const { data: tenants = [] } = useQuery({
+    queryKey: ["my-tenants", accounts[0]?.homeAccountId],
+    queryFn: async () => {
+      const list = await apiGet<TenantOut[]>("/api/v1/auth/tenants");
+      // Auto-select first tenant if none chosen yet
+      if (!tenantId && list.length > 0) {
+        setTenantId(list[0].tenant_id);
+        setCompanySlug(list[0].company_slug);
+      }
+      return list;
+    },
+    enabled: !!accounts.length,
+    staleTime: 10 * 60 * 1000,
   });
 
   return (
@@ -132,14 +160,15 @@ export function AppShell({ children }: AppShellProps) {
 
         <Sidebar />
 
-        <div className="p-4 border-t space-y-1">
-          <TenantSwitcher />
-        </div>
+        {tenants.length > 1 && (
+          <div className="p-3 border-t">
+            <TenantSwitcher tenants={tenants} />
+          </div>
+        )}
       </aside>
 
       {/* Main area */}
       <div className="flex-1 flex flex-col min-w-0">
-        {/* Top bar */}
         <header className="h-14 border-b flex items-center justify-end px-6 gap-3 shrink-0">
           <UserMenu />
         </header>

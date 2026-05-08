@@ -29,12 +29,14 @@ export function TestScriptDetailPage() {
         `/api/v1/projects/${projectId}/test-scripts/${scriptId}/versions`
       ),
     enabled: !!scriptId,
+    staleTime: 60_000,
   });
 
+  // Content keyed by format, e.g. {"gherkin": "...", "playwright_ts": "..."}
   const { data: scriptContent } = useQuery({
     queryKey: ["script-content", scriptId],
     queryFn: () =>
-      apiGet<{ content: string }>(
+      apiGet<Record<string, string>>(
         `/api/v1/projects/${projectId}/test-scripts/${scriptId}/content`
       ),
     enabled: !!scriptId,
@@ -42,13 +44,13 @@ export function TestScriptDetailPage() {
 
   const approve = useMutation({
     mutationFn: () =>
-      apiPost(`/api/v1/projects/${projectId}/test-scripts/${scriptId}/approve`),
+      apiPost(`/api/v1/projects/${projectId}/test-scripts/${scriptId}/approve`, { comments: null }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["script", scriptId] }),
   });
 
   const reject = useMutation({
     mutationFn: () =>
-      apiPost(`/api/v1/projects/${projectId}/test-scripts/${scriptId}/reject`),
+      apiPost(`/api/v1/projects/${projectId}/test-scripts/${scriptId}/reject`, { comments: "Rejected via review." }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["script", scriptId] }),
   });
 
@@ -159,7 +161,10 @@ export function TestScriptDetailPage() {
 
       {/* Script editor */}
       <ScriptEditor
-        value={scriptContent?.content ?? "// Loading script content…"}
+        value={
+          (scriptContent && (scriptContent[script.format] ?? Object.values(scriptContent)[0])) ??
+          "// Loading script content…"
+        }
         format={script.format}
         readOnly
         height="480px"
