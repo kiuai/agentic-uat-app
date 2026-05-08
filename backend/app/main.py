@@ -3,21 +3,24 @@ KAATS FastAPI application factory.
 
 Startup order:
 1. structlog configured
-2. Application Insights middleware attached (if connection string present)
-3. Database engine warmed up
-4. Cosmos client verified
-5. Routers mounted under /api/v1
+2. CORS middleware applied (origins from settings)
+3. Tenant resolution middleware attached
+4. Request timing + correlation ID middleware attached
+5. Application Insights middleware attached (if connection string present)
+6. Database engine warmed up
+7. Cosmos client verified
+8. All routers mounted under /api/v1
 """
 
 from __future__ import annotations
 
 import time
+import uuid
 from contextlib import asynccontextmanager
 from typing import Any
 
 import structlog
 from fastapi import FastAPI, Request, status
-from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -26,6 +29,7 @@ from app.config import get_settings
 from app.cosmos import check_cosmos_connection, close_cosmos_client
 from app.database import check_db_connection, dispose_engine
 from app.logging_config import configure_logging
+from app.middleware.tenant import TenantMiddleware
 from app.routers import (
     ai_generation,
     auth,
@@ -54,13 +58,11 @@ async def lifespan(app: FastAPI):  # type: ignore[type-arg]
         openapi_enabled=settings.openapi_enabled,
     )
 
-    # Warm up database connection pool
     if not await check_db_connection():
         logger.warning("database_unavailable_on_startup")
     else:
         logger.info("database_connected")
 
-    # Verify Cosmos DB
     if not await check_cosmos_connection():
         logger.warning("cosmos_unavailable_on_startup")
     else:
@@ -68,7 +70,6 @@ async def lifespan(app: FastAPI):  # type: ignore[type-arg]
 
     yield
 
-    # Shutdown: drain connections
     logger.info("kaats_shutting_down")
     await dispose_engine()
     await close_cosmos_client()
@@ -100,18 +101,29 @@ def create_app() -> FastAPI:
 
 
 def _add_middleware(app: FastAPI, settings: Any) -> None:
+    # CORS — must be outermost so pre-flight OPTIONS requests are handled
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.allowed_origins,
         allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+        allow_headers=[
+            "Authorization",
+            "Content-Type",
+            "X-Request-Id",
+            "X-Tenant-Slug",
+        ],
+        expose_headers=["X-Request-Id", "X-Response-Time-Ms"],
     )
 
-    # Request timing + correlation ID middleware
+    # Tenant slug resolution
+    app.add_middleware(TenantMiddleware)
+
+    # Request timing, correlation ID, and structured log context
     @app.middleware("http")
     async def request_context_middleware(request: Request, call_next: Any) -> Any:
-        request_id = request.headers.get("X-Request-Id", "")
+        # Assign a correlation ID — use client-provided header or generate one
+        request_id = request.headers.get("X-Request-Id") or str(uuid.uuid4())
         start = time.perf_counter()
 
         with structlog.contextvars.bound_contextvars(
@@ -121,8 +133,13 @@ def _add_middleware(app: FastAPI, settings: Any) -> None:
         ):
             response = await call_next(request)
             duration_ms = round((time.perf_counter() - start) * 1000, 1)
+
             response.headers["X-Request-Id"] = request_id
             response.headers["X-Response-Time-Ms"] = str(duration_ms)
+            # Security headers
+            response.headers["X-Content-Type-Options"] = "nosniff"
+            response.headers["X-Frame-Options"] = "DENY"
+            response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
 
             logger.info(
                 "http_request",

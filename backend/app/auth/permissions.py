@@ -2,229 +2,227 @@
 Permission definitions and role-to-permission mappings.
 
 This is the authoritative source for the RBAC matrix documented in
-/docs/RBAC_MATRIX.md. Any change here should be reflected there.
+/docs/RBAC_MATRIX.md. Any change here must be reflected there.
+
+Permission names follow the pattern NOUN_VERB to make permission checks
+read naturally: ``user.has_permission(Permission.SCRIPT_APPROVE)``.
 """
 
 from __future__ import annotations
 
 from enum import Enum
 
-from app.models.user import UserRole
+from app.models.user import RoleCode
+
+# Backward-compat alias — code that imported UserRole as the role enum continues to work
+UserRole = RoleCode
 
 
 class Permission(str, Enum):
-    # Tenant & User Management
-    ENTERPRISE_MANAGE = "enterprise:manage"
-    ENTERPRISE_READ = "enterprise:read"
-    COMPANY_MANAGE = "company:manage"
-    COMPANY_READ = "company:read"
-    USER_MANAGE = "user:manage"
-    USER_READ = "user:read"
-    ROLE_ASSIGN = "role:assign"
-    AUDIT_LOG_READ = "audit_log:read"
+    # ── Tenant Management ──────────────────────────────────────────────────
+    TENANT_READ = "tenant:read"
+    TENANT_CREATE = "tenant:create"
+    TENANT_UPDATE = "tenant:update"
+    TENANT_DELETE = "tenant:delete"
 
-    # Projects & Environments
-    PROJECT_CREATE = "project:create"
+    # ── User Management ────────────────────────────────────────────────────
+    USER_READ = "user:read"
+    USER_CREATE = "user:create"
+    USER_UPDATE = "user:update"
+    USER_DELETE = "user:delete"
+    USER_ASSIGN_ROLE = "user:assign_role"
+
+    # ── Project Management ─────────────────────────────────────────────────
     PROJECT_READ = "project:read"
+    PROJECT_CREATE = "project:create"
     PROJECT_UPDATE = "project:update"
     PROJECT_DELETE = "project:delete"
-    ENVIRONMENT_MANAGE = "environment:manage"
-    ENVIRONMENT_READ = "environment:read"
 
-    # Requirements
-    REQUIREMENT_CREATE = "requirement:create"
+    # ── Requirements ───────────────────────────────────────────────────────
     REQUIREMENT_READ = "requirement:read"
+    REQUIREMENT_CREATE = "requirement:create"
     REQUIREMENT_UPDATE = "requirement:update"
     REQUIREMENT_DELETE = "requirement:delete"
-    REQUIREMENT_IMPORT = "requirement:import"
 
-    # AI Generation
-    AI_GENERATION_TRIGGER = "ai_generation:trigger"
-    AI_GENERATION_READ = "ai_generation:read"
-    AI_GENERATION_CONFIGURE = "ai_generation:configure"
-
-    # Crawler
-    CRAWLER_CONFIGURE = "crawler:configure"
-    CRAWLER_TRIGGER = "crawler:trigger"
-    CRAWLER_READ = "crawler:read"
-
-    # Test Scripts
-    SCRIPT_CREATE = "script:create"
+    # ── Test Scripts ───────────────────────────────────────────────────────
     SCRIPT_READ = "script:read"
+    SCRIPT_CREATE = "script:create"
     SCRIPT_UPDATE = "script:update"
     SCRIPT_DELETE = "script:delete"
-    SCRIPT_SUBMIT = "script:submit"
     SCRIPT_APPROVE = "script:approve"
     SCRIPT_EXPORT = "script:export"
+    SCRIPT_IMPORT = "script:import"
 
-    # Test Cycles & Executions
-    CYCLE_CREATE = "cycle:create"
+    # ── Test Cycles & Execution ────────────────────────────────────────────
     CYCLE_READ = "cycle:read"
+    CYCLE_CREATE = "cycle:create"
     CYCLE_UPDATE = "cycle:update"
     CYCLE_DELETE = "cycle:delete"
-    EXECUTION_RUN = "execution:run"
-    EXECUTION_LOG = "execution:log"
-    EXECUTION_EVIDENCE_UPLOAD = "execution:evidence:upload"
-    EXECUTION_OVERRIDE = "execution:override"
+    ASSIGNMENT_CREATE = "assignment:create"
+    ASSIGNMENT_UPDATE = "assignment:update"
+    RESULT_CREATE = "result:create"
+    RESULT_UPDATE = "result:update"
+    RESULT_READ = "result:read"
 
-    # Defects
-    DEFECT_CREATE = "defect:create"
-    DEFECT_READ = "defect:read"
-    DEFECT_UPDATE = "defect:update"
-    DEFECT_DELETE = "defect:delete"
+    # ── Crawler ────────────────────────────────────────────────────────────
+    CRAWLER_READ = "crawler:read"
+    CRAWLER_CREATE = "crawler:create"
+    CRAWLER_CANCEL = "crawler:cancel"
 
-    # Reports
+    # ── AI Generation ──────────────────────────────────────────────────────
+    AI_GENERATE = "ai:generate"
+    AI_CONFIGURE = "ai:configure"
+
+    # ── Reports ────────────────────────────────────────────────────────────
     REPORT_READ = "report:read"
     REPORT_EXPORT = "report:export"
-    REPORT_SCHEDULE = "report:schedule"
+
+    # ── Administration ─────────────────────────────────────────────────────
+    ADMIN_GLOBAL = "admin:global"
+    ADMIN_ENTERPRISE = "admin:enterprise"
+    ADMIN_COMPANY = "admin:company"
+    AUDIT_LOG_READ = "audit_log:read"
 
 
-# Full permission set — convenience alias
 _ALL = set(Permission)
 
-# Per-role permission sets
-RolePermissions: dict[UserRole, set[Permission]] = {
-    UserRole.GLOBAL_ADMIN: _ALL,
+# Permissions available to every authenticated user regardless of role
+_BASE: set[Permission] = {
+    Permission.PROJECT_READ,
+    Permission.REQUIREMENT_READ,
+    Permission.SCRIPT_READ,
+    Permission.CYCLE_READ,
+    Permission.RESULT_READ,
+    Permission.CRAWLER_READ,
+    Permission.REPORT_READ,
+}
 
-    UserRole.ENTERPRISE_ADMIN: _ALL - {
-        Permission.ENTERPRISE_MANAGE,  # Can't create/delete other enterprises
+ROLE_PERMISSIONS: dict[RoleCode, set[Permission]] = {
+
+    RoleCode.GLOBAL_ADMIN: _ALL,
+
+    RoleCode.ENTERPRISE_ADMIN: _ALL - {Permission.ADMIN_GLOBAL},
+
+    RoleCode.COMPANY_ADMIN: _ALL - {
+        Permission.ADMIN_GLOBAL,
+        Permission.ADMIN_ENTERPRISE,
+        Permission.TENANT_CREATE,
+        Permission.TENANT_DELETE,
     },
 
-    UserRole.COMPANY_ADMIN: _ALL - {
-        Permission.ENTERPRISE_MANAGE,
-        Permission.ENTERPRISE_READ,
-        Permission.COMPANY_MANAGE,
-    },
-
-    UserRole.SYSTEM_MANAGER: {
-        Permission.PROJECT_CREATE,
-        Permission.PROJECT_READ,
-        Permission.PROJECT_UPDATE,
-        Permission.PROJECT_DELETE,
-        Permission.ENVIRONMENT_MANAGE,
-        Permission.ENVIRONMENT_READ,
+    RoleCode.SYSTEM_MANAGER: {
+        # Projects
+        Permission.PROJECT_READ, Permission.PROJECT_CREATE,
+        Permission.PROJECT_UPDATE, Permission.PROJECT_DELETE,
+        # Requirements
+        Permission.REQUIREMENT_READ, Permission.REQUIREMENT_CREATE,
+        Permission.REQUIREMENT_UPDATE, Permission.REQUIREMENT_DELETE,
+        # Scripts
+        Permission.SCRIPT_READ, Permission.SCRIPT_CREATE,
+        Permission.SCRIPT_UPDATE, Permission.SCRIPT_DELETE,
+        Permission.SCRIPT_IMPORT, Permission.SCRIPT_EXPORT,
+        # Cycles
+        Permission.CYCLE_READ, Permission.CYCLE_CREATE,
+        Permission.CYCLE_UPDATE, Permission.CYCLE_DELETE,
+        Permission.ASSIGNMENT_CREATE, Permission.ASSIGNMENT_UPDATE,
+        Permission.RESULT_READ,
+        # Crawler
+        Permission.CRAWLER_READ, Permission.CRAWLER_CREATE, Permission.CRAWLER_CANCEL,
+        # AI
+        Permission.AI_GENERATE, Permission.AI_CONFIGURE,
+        # Reporting
+        Permission.REPORT_READ, Permission.REPORT_EXPORT,
+        # Users (read-only)
         Permission.USER_READ,
-        Permission.REQUIREMENT_CREATE,
-        Permission.REQUIREMENT_READ,
-        Permission.REQUIREMENT_UPDATE,
-        Permission.REQUIREMENT_DELETE,
-        Permission.REQUIREMENT_IMPORT,
-        Permission.AI_GENERATION_TRIGGER,
-        Permission.AI_GENERATION_READ,
-        Permission.AI_GENERATION_CONFIGURE,
-        Permission.CRAWLER_CONFIGURE,
-        Permission.CRAWLER_TRIGGER,
-        Permission.CRAWLER_READ,
-        Permission.SCRIPT_CREATE,
-        Permission.SCRIPT_READ,
-        Permission.SCRIPT_UPDATE,
-        Permission.SCRIPT_DELETE,
-        Permission.SCRIPT_SUBMIT,
-        Permission.SCRIPT_APPROVE,
-        Permission.SCRIPT_EXPORT,
-        Permission.CYCLE_CREATE,
-        Permission.CYCLE_READ,
-        Permission.CYCLE_UPDATE,
-        Permission.CYCLE_DELETE,
-        Permission.EXECUTION_RUN,
-        Permission.EXECUTION_LOG,
-        Permission.EXECUTION_EVIDENCE_UPLOAD,
-        Permission.EXECUTION_OVERRIDE,
-        Permission.DEFECT_CREATE,
-        Permission.DEFECT_READ,
-        Permission.DEFECT_UPDATE,
-        Permission.DEFECT_DELETE,
-        Permission.REPORT_READ,
-        Permission.REPORT_EXPORT,
-        Permission.REPORT_SCHEDULE,
         Permission.AUDIT_LOG_READ,
     },
 
-    UserRole.VALIDATION_LEAD: {
+    RoleCode.VALIDATION_LEAD: {
+        # Projects & Cycles
         Permission.PROJECT_READ,
-        Permission.ENVIRONMENT_READ,
-        Permission.REQUIREMENT_CREATE,
-        Permission.REQUIREMENT_READ,
-        Permission.REQUIREMENT_UPDATE,
-        Permission.REQUIREMENT_IMPORT,
-        Permission.AI_GENERATION_TRIGGER,
-        Permission.AI_GENERATION_READ,
-        Permission.CRAWLER_TRIGGER,
-        Permission.CRAWLER_READ,
-        Permission.SCRIPT_CREATE,
-        Permission.SCRIPT_READ,
-        Permission.SCRIPT_UPDATE,
-        Permission.SCRIPT_SUBMIT,
-        Permission.SCRIPT_APPROVE,
+        Permission.CYCLE_READ, Permission.CYCLE_CREATE,
+        Permission.CYCLE_UPDATE, Permission.CYCLE_DELETE,
+        Permission.ASSIGNMENT_CREATE, Permission.ASSIGNMENT_UPDATE,
+        # Scripts
+        Permission.SCRIPT_READ, Permission.SCRIPT_CREATE,
+        Permission.SCRIPT_UPDATE, Permission.SCRIPT_APPROVE,
         Permission.SCRIPT_EXPORT,
-        Permission.CYCLE_CREATE,
-        Permission.CYCLE_READ,
-        Permission.CYCLE_UPDATE,
-        Permission.EXECUTION_RUN,
-        Permission.EXECUTION_LOG,
-        Permission.EXECUTION_EVIDENCE_UPLOAD,
-        Permission.EXECUTION_OVERRIDE,
-        Permission.DEFECT_CREATE,
-        Permission.DEFECT_READ,
-        Permission.DEFECT_UPDATE,
-        Permission.REPORT_READ,
-        Permission.REPORT_EXPORT,
+        # Requirements
+        Permission.REQUIREMENT_READ, Permission.REQUIREMENT_CREATE,
+        Permission.REQUIREMENT_UPDATE,
+        # Results
+        Permission.RESULT_READ,
+        # Reports
+        Permission.REPORT_READ, Permission.REPORT_EXPORT,
+        # Crawler (trigger only)
+        Permission.CRAWLER_READ, Permission.CRAWLER_CREATE,
+        # AI generation
+        Permission.AI_GENERATE,
+        Permission.AUDIT_LOG_READ,
     },
 
-    UserRole.QA: {
+    RoleCode.QA: {
         Permission.PROJECT_READ,
-        Permission.ENVIRONMENT_READ,
         Permission.REQUIREMENT_READ,
-        Permission.AI_GENERATION_READ,
+        Permission.SCRIPT_READ, Permission.SCRIPT_EXPORT,
+        Permission.CYCLE_READ,
+        Permission.ASSIGNMENT_UPDATE,
+        Permission.RESULT_CREATE, Permission.RESULT_UPDATE, Permission.RESULT_READ,
         Permission.CRAWLER_READ,
-        Permission.SCRIPT_READ,
+        Permission.REPORT_READ,
+    },
+
+    RoleCode.VALIDATION_TESTER: {
+        Permission.PROJECT_READ,
+        Permission.REQUIREMENT_READ,
+        # Own draft scripts only — enforced at service layer
+        Permission.SCRIPT_READ, Permission.SCRIPT_CREATE, Permission.SCRIPT_UPDATE,
         Permission.SCRIPT_EXPORT,
         Permission.CYCLE_READ,
-        Permission.EXECUTION_RUN,
-        Permission.EXECUTION_LOG,
-        Permission.EXECUTION_EVIDENCE_UPLOAD,
-        Permission.DEFECT_CREATE,
-        Permission.DEFECT_READ,
-        Permission.DEFECT_UPDATE,
-        Permission.REPORT_READ,
-        Permission.REPORT_EXPORT,
-    },
-
-    UserRole.VALIDATION_TESTER: {
-        Permission.PROJECT_READ,
-        Permission.ENVIRONMENT_READ,
-        Permission.REQUIREMENT_CREATE,
-        Permission.REQUIREMENT_READ,
-        Permission.REQUIREMENT_UPDATE,
-        Permission.AI_GENERATION_TRIGGER,
-        Permission.AI_GENERATION_READ,
-        Permission.SCRIPT_CREATE,
-        Permission.SCRIPT_READ,
-        Permission.SCRIPT_UPDATE,
-        Permission.SCRIPT_SUBMIT,
-        Permission.SCRIPT_EXPORT,  # Assigned scripts only — enforced in service layer
-        Permission.CYCLE_READ,
-        Permission.EXECUTION_RUN,   # Assigned scripts only
-        Permission.EXECUTION_LOG,   # Assigned scripts only
-        Permission.EXECUTION_EVIDENCE_UPLOAD,
-        Permission.DEFECT_CREATE,
-        Permission.DEFECT_READ,
-        Permission.DEFECT_UPDATE,
+        # Own assignment only — enforced at service layer
+        Permission.ASSIGNMENT_UPDATE,
+        Permission.RESULT_CREATE, Permission.RESULT_READ,
         Permission.REPORT_READ,
     },
 
-    UserRole.BUSINESS_PROCESS_OWNER: {
-        Permission.PROJECT_READ,
+    RoleCode.BUSINESS_PROCESS_OWNER: {
+        # Domain-scoped — service layer enforces domain_code filtering
         Permission.REQUIREMENT_READ,
         Permission.SCRIPT_READ,
-        Permission.SCRIPT_APPROVE,  # Domain-scoped — enforced in service layer
+        Permission.SCRIPT_APPROVE,  # Domain-scoped only
         Permission.CYCLE_READ,
-        Permission.DEFECT_READ,
-        Permission.REPORT_READ,
-        Permission.REPORT_EXPORT,
+        Permission.RESULT_READ,
+        Permission.REPORT_READ, Permission.REPORT_EXPORT,
     },
 }
 
 
-def has_permission(role: UserRole, permission: Permission) -> bool:
-    return permission in RolePermissions.get(role, set())
+def has_permission(role: RoleCode, permission: Permission) -> bool:
+    """Check if a single role grants the given permission."""
+    return permission in ROLE_PERMISSIONS.get(role, set())
+
+
+def permissions_for_roles(roles: list[RoleCode]) -> set[Permission]:
+    """Return the union permission set for a list of roles."""
+    perms: set[Permission] = set()
+    for role in roles:
+        perms |= ROLE_PERMISSIONS.get(role, set())
+    return perms
+
+
+# ---------------------------------------------------------------------------
+# Sensitive permissions that trigger audit log writes
+# ---------------------------------------------------------------------------
+
+AUDIT_REQUIRED_PERMISSIONS = frozenset({
+    Permission.SCRIPT_APPROVE,
+    Permission.SCRIPT_DELETE,
+    Permission.USER_ASSIGN_ROLE,
+    Permission.USER_DELETE,
+    Permission.ADMIN_GLOBAL,
+    Permission.ADMIN_ENTERPRISE,
+    Permission.ADMIN_COMPANY,
+    Permission.TENANT_CREATE,
+    Permission.TENANT_DELETE,
+    Permission.CYCLE_DELETE,
+})
