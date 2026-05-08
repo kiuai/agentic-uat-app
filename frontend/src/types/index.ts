@@ -30,6 +30,8 @@ export interface Project {
 export type RequirementStatus = "PENDING" | "PROCESSED" | "FAILED";
 export type RequirementSourceType = "TEXT" | "DOCX" | "PDF" | "JIRA" | "ADO";
 
+export type RequirementPriority = "CRITICAL" | "HIGH" | "MEDIUM" | "LOW";
+
 export interface Requirement {
   id: string;
   project_id: string;
@@ -39,6 +41,7 @@ export interface Requirement {
   content_text: string | null;
   blob_uri: string | null;
   status: RequirementStatus;
+  priority: RequirementPriority | null;
   domain_code: string | null;
   uploaded_by: string;
   created_at: string;
