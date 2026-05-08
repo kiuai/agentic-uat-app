@@ -1,0 +1,192 @@
+name: PR Preview Environments
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+    branches: [main]
+
+concurrency:
+  group: pr-preview-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  id-token: write
+  pull-requests: write  # For posting PR comments
+
+jobs:
+  # ── Deploy preview environment ────────────────────────────────────────────
+  deploy-preview:
+    name: Deploy PR preview
+    runs-on: ubuntu-latest
+    if: github.event.action != 'closed'
+    environment: staging
+
+    env:
+      PR_NUM: ${{ github.event.pull_request.number }}
+      SHORT_SHA: ${{ github.event.pull_request.head.sha != '' && github.event.pull_request.head.sha || github.sha }}
+      RG: rg-kaats-staging
+      ACR: ${{ secrets.ACR_LOGIN_SERVER }}
+
+    outputs:
+      preview-url: ${{ steps.get-url.outputs.preview-url }}
+      revision-name: ${{ steps.deploy.outputs.revision-name }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Build and push PR images
+        run: |
+          SHORT="${SHORT_SHA:0:7}"
+          az acr login --name "${ACR%%.*}"
+
+          # Build API image for this PR
+          docker build \
+            -t "${ACR}/kaats-api:pr-${PR_NUM}" \
+            -f backend/Dockerfile backend/
+          docker push "${ACR}/kaats-api:pr-${PR_NUM}"
+
+          # Build Frontend image for this PR
+          docker build \
+            -t "${ACR}/kaats-frontend:pr-${PR_NUM}" \
+            -f frontend/Dockerfile frontend/
+          docker push "${ACR}/kaats-frontend:pr-${PR_NUM}"
+
+      - name: Deploy PR revision (0% traffic — labelled preview)
+        id: deploy
+        run: |
+          SUFFIX="pr-${PR_NUM}"
+
+          # Deploy a new labelled revision with 0 traffic weight
+          az containerapp update \
+            --name kaats-staging-api \
+            --resource-group "${RG}" \
+            --image "${ACR}/kaats-api:pr-${PR_NUM}" \
+            --revision-suffix "${SUFFIX}" \
+            --output none
+
+          # Give the revision a label so we can reference it by URL
+          NEW_REV=$(az containerapp revision list \
+            --name kaats-staging-api \
+            --resource-group "${RG}" \
+            --query "sort_by([],&properties.createdTime)[-1].name" \
+            --output tsv)
+
+          az containerapp revision label add \
+            --name kaats-staging-api \
+            --resource-group "${RG}" \
+            --revision "${NEW_REV}" \
+            --label "${SUFFIX}" \
+            --output none || true
+
+          echo "revision-name=${NEW_REV}" >> "$GITHUB_OUTPUT"
+          echo "Deployed revision: ${NEW_REV}"
+
+      - name: Get preview URL
+        id: get-url
+        run: |
+          # Container Apps generates a label-based URL: https://<app>---<label>.<domain>
+          APP_FQDN=$(az containerapp show \
+            --name kaats-staging-api \
+            --resource-group "${RG}" \
+            --query "properties.configuration.ingress.fqdn" \
+            --output tsv)
+
+          # Label URL pattern: app---label.env-domain
+          DOMAIN="${APP_FQDN#kaats-staging-api.}"
+          PREVIEW_URL="https://kaats-staging-api---pr-${PR_NUM}.${DOMAIN}"
+          echo "preview-url=${PREVIEW_URL}" >> "$GITHUB_OUTPUT"
+          echo "Preview URL: ${PREVIEW_URL}"
+
+      - name: Comment on PR with preview URL
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          body: |
+            ## 🔍 Preview Environment
+
+            A preview environment has been deployed for this PR.
+
+            | | |
+            |---|---|
+            | **API URL** | ${{ steps.get-url.outputs.preview-url }} |
+            | **Revision** | `${{ steps.deploy.outputs.revision-name }}` |
+            | **Image tag** | `pr-${{ github.event.pull_request.number }}` |
+            | **Commit** | `${{ env.SHORT_SHA }}` |
+
+            > This environment is automatically cleaned up when the PR is closed.
+
+            <sub>Last updated: ${{ github.event.pull_request.updated_at }}</sub>
+          comment-id: ${{ steps.find-comment.outputs.comment-id }}
+          edit-mode: replace
+
+      - name: Find existing PR comment (for updates)
+        id: find-comment
+        uses: peter-evans/find-comment@v3
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          comment-author: github-actions[bot]
+          body-includes: "🔍 Preview Environment"
+
+  # ── Cleanup preview environment when PR is closed ─────────────────────────
+  cleanup-preview:
+    name: Clean up PR preview
+    runs-on: ubuntu-latest
+    if: github.event.action == 'closed'
+    environment: staging
+
+    env:
+      PR_NUM: ${{ github.event.pull_request.number }}
+      RG: rg-kaats-staging
+
+    steps:
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Deactivate PR preview revision
+        run: |
+          # Find revisions with our PR suffix
+          REVISIONS=$(az containerapp revision list \
+            --name kaats-staging-api \
+            --resource-group "${RG}" \
+            --query "[?contains(name,'pr-${PR_NUM}')].name" \
+            --output tsv)
+
+          if [[ -z "${REVISIONS}" ]]; then
+            echo "No preview revisions found for PR #${PR_NUM}"
+            exit 0
+          fi
+
+          while IFS= read -r rev; do
+            if [[ -n "${rev}" ]]; then
+              echo "Deactivating revision: ${rev}"
+              az containerapp revision deactivate \
+                --name kaats-staging-api \
+                --resource-group "${RG}" \
+                --revision "${rev}" \
+                --output none || true
+            fi
+          done <<< "${REVISIONS}"
+
+          echo "✓ Preview environment for PR #${PR_NUM} cleaned up"
+
+      - name: Comment on PR — cleanup complete
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          body: |
+            ## 🧹 Preview Environment Removed
+
+            The preview environment for this PR has been cleaned up.
+          edit-mode: replace

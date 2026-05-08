@@ -1,0 +1,205 @@
+name: Build & Push Images
+
+on:
+  push:
+    branches: [main]
+    tags:
+      - "v*.*.*"
+
+concurrency:
+  group: build-${{ github.sha }}
+  cancel-in-progress: false  # Never cancel an in-progress build on main
+
+permissions:
+  contents: read
+  id-token: write       # Required for OIDC login to Azure
+  packages: write       # Required for GHCR (if used)
+  attestations: write   # Required for image signing / SBOM attestation
+
+jobs:
+  build-and-push:
+    name: Build, Sign & Push
+    runs-on: ubuntu-latest
+
+    outputs:
+      image-tag: ${{ steps.meta.outputs.version }}
+      short-sha: ${{ steps.vars.outputs.short-sha }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history for versioning
+
+      - name: Derive image metadata
+        id: vars
+        run: |
+          echo "short-sha=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+          echo "is-tag=${{ startsWith(github.ref, 'refs/tags/') }}" >> "$GITHUB_OUTPUT"
+
+      # ── Azure OIDC Login (no stored credentials) ────────────────────────────
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: ACR login
+        run: |
+          az acr login --name ${{ secrets.ACR_LOGIN_SERVER }}
+
+      # ── Docker Buildx setup ─────────────────────────────────────────────────
+
+      - uses: docker/setup-buildx-action@v3
+
+      # ── Compute image tags ──────────────────────────────────────────────────
+      # Tags: short-sha, 'latest', and semver if a tag push
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ secrets.ACR_LOGIN_SERVER }}/kaats-api
+          tags: |
+            type=sha,prefix=,format=short
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+
+      # ── Build images ────────────────────────────────────────────────────────
+
+      - name: Build API image
+        id: build-api
+        uses: docker/build-push-action@v5
+        with:
+          context: backend
+          file: backend/Dockerfile
+          push: true
+          tags: |
+            ${{ secrets.ACR_LOGIN_SERVER }}/kaats-api:${{ steps.vars.outputs.short-sha }}
+            ${{ secrets.ACR_LOGIN_SERVER }}/kaats-api:latest
+            ${{ startsWith(github.ref, 'refs/tags/') && format('{0}/kaats-api:{1}', secrets.ACR_LOGIN_SERVER, github.ref_name) || '' }}
+          cache-from: type=registry,ref=${{ secrets.ACR_LOGIN_SERVER }}/kaats-api:buildcache
+          cache-to: type=registry,ref=${{ secrets.ACR_LOGIN_SERVER }}/kaats-api:buildcache,mode=max
+          labels: ${{ steps.meta.outputs.labels }}
+          provenance: true
+
+      - name: Build Worker image
+        id: build-worker
+        uses: docker/build-push-action@v5
+        with:
+          context: backend
+          file: backend/Dockerfile.worker
+          push: true
+          tags: |
+            ${{ secrets.ACR_LOGIN_SERVER }}/kaats-worker:${{ steps.vars.outputs.short-sha }}
+            ${{ secrets.ACR_LOGIN_SERVER }}/kaats-worker:latest
+            ${{ startsWith(github.ref, 'refs/tags/') && format('{0}/kaats-worker:{1}', secrets.ACR_LOGIN_SERVER, github.ref_name) || '' }}
+          cache-from: type=registry,ref=${{ secrets.ACR_LOGIN_SERVER }}/kaats-worker:buildcache
+          cache-to: type=registry,ref=${{ secrets.ACR_LOGIN_SERVER }}/kaats-worker:buildcache,mode=max
+          labels: ${{ steps.meta.outputs.labels }}
+          provenance: true
+
+      - name: Build Frontend image
+        id: build-frontend
+        uses: docker/build-push-action@v5
+        with:
+          context: frontend
+          file: frontend/Dockerfile
+          push: true
+          tags: |
+            ${{ secrets.ACR_LOGIN_SERVER }}/kaats-frontend:${{ steps.vars.outputs.short-sha }}
+            ${{ secrets.ACR_LOGIN_SERVER }}/kaats-frontend:latest
+            ${{ startsWith(github.ref, 'refs/tags/') && format('{0}/kaats-frontend:{1}', secrets.ACR_LOGIN_SERVER, github.ref_name) || '' }}
+          cache-from: type=registry,ref=${{ secrets.ACR_LOGIN_SERVER }}/kaats-frontend:buildcache
+          cache-to: type=registry,ref=${{ secrets.ACR_LOGIN_SERVER }}/kaats-frontend:buildcache,mode=max
+          labels: ${{ steps.meta.outputs.labels }}
+          provenance: true
+          build-args: |
+            VITE_AZURE_CLIENT_ID=${{ secrets.VITE_AZURE_CLIENT_ID }}
+            VITE_AZURE_TENANT_ID=${{ secrets.AZURE_TENANT_ID }}
+            VITE_API_BASE_URL=${{ secrets.VITE_API_BASE_URL_STAGING }}
+
+      # ── Supply chain security ───────────────────────────────────────────────
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign images with Cosign (keyless OIDC)
+        run: |
+          for image in \
+            "${{ secrets.ACR_LOGIN_SERVER }}/kaats-api@${{ steps.build-api.outputs.digest }}" \
+            "${{ secrets.ACR_LOGIN_SERVER }}/kaats-worker@${{ steps.build-worker.outputs.digest }}" \
+            "${{ secrets.ACR_LOGIN_SERVER }}/kaats-frontend@${{ steps.build-frontend.outputs.digest }}"; do
+            cosign sign --yes "$image"
+          done
+        env:
+          COSIGN_EXPERIMENTAL: "1"
+
+      - name: Generate SBOM — API
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ secrets.ACR_LOGIN_SERVER }}/kaats-api:${{ steps.vars.outputs.short-sha }}
+          artifact-name: sbom-api-${{ steps.vars.outputs.short-sha }}.spdx.json
+          output-file: sbom-api.spdx.json
+
+      - name: Generate SBOM — Worker
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ secrets.ACR_LOGIN_SERVER }}/kaats-worker:${{ steps.vars.outputs.short-sha }}
+          artifact-name: sbom-worker-${{ steps.vars.outputs.short-sha }}.spdx.json
+          output-file: sbom-worker.spdx.json
+
+      - name: Generate SBOM — Frontend
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ secrets.ACR_LOGIN_SERVER }}/kaats-frontend:${{ steps.vars.outputs.short-sha }}
+          artifact-name: sbom-frontend-${{ steps.vars.outputs.short-sha }}.spdx.json
+          output-file: sbom-frontend.spdx.json
+
+      # ── Trivy image scan (informational) ────────────────────────────────────
+
+      - name: Trivy scan — API image
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ secrets.ACR_LOGIN_SERVER }}/kaats-api:${{ steps.vars.outputs.short-sha }}
+          format: sarif
+          output: trivy-api.sarif
+          severity: CRITICAL,HIGH
+          exit-code: "0"   # Don't block build; security.yml handles CVE gating
+
+      - name: Upload Trivy SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy-api.sarif
+          category: trivy-api
+
+      # ── Update staging Container Apps ───────────────────────────────────────
+
+      - name: Update staging Container Apps (auto-deploy on main)
+        if: github.ref == 'refs/heads/main'
+        run: |
+          SHORT_SHA="${{ steps.vars.outputs.short-sha }}"
+          RG="rg-kaats-staging"
+          ACR="${{ secrets.ACR_LOGIN_SERVER }}"
+
+          for app in kaats-staging-api kaats-staging-worker kaats-staging-frontend; do
+            image_name="${app##*-}"  # strip "kaats-staging-" prefix → api/worker/frontend
+            az containerapp update \
+              --name "${app}" \
+              --resource-group "${RG}" \
+              --image "${ACR}/kaats-${image_name}:${SHORT_SHA}" \
+              --output none
+            echo "Updated ${app} → ${image_name}:${SHORT_SHA}"
+          done
+
+      - name: Summary
+        run: |
+          echo "### Build Summary" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Image | Tag |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|---|---|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| kaats-api | \`${{ steps.vars.outputs.short-sha }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| kaats-worker | \`${{ steps.vars.outputs.short-sha }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| kaats-frontend | \`${{ steps.vars.outputs.short-sha }}\` |" >> "$GITHUB_STEP_SUMMARY"

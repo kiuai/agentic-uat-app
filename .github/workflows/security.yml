@@ -1,0 +1,305 @@
+name: Scheduled Security Audit
+
+on:
+  schedule:
+    - cron: "0 2 * * *"   # Daily at 02:00 UTC
+  workflow_dispatch:       # Allow manual trigger
+
+permissions:
+  contents: read
+  id-token: write          # For Azure login (ACR image scanning)
+  issues: write            # For creating CVE issues
+  security-events: write   # For uploading SARIF results
+
+jobs:
+  # ── Python dependency audit ───────────────────────────────────────────────
+  python-audit:
+    name: Python — pip-audit
+    runs-on: ubuntu-latest
+
+    outputs:
+      has-critical: ${{ steps.audit.outputs.has-critical }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install backend dependencies
+        run: pip install -e "backend/.[dev]" --quiet
+
+      - name: pip-audit
+        id: audit
+        run: |
+          pip install pip-audit
+          set +e
+          pip-audit \
+            --requirement <(pip freeze) \
+            --format json \
+            --output pip-audit-results.json
+          EXIT_CODE=$?
+          set -e
+
+          # Parse results
+          CRITICAL=$(python3 -c "
+          import json, sys
+          with open('pip-audit-results.json') as f:
+              data = json.load(f)
+          vulns = data.get('vulnerabilities', [])
+          critical = [v for v in vulns if any(
+              a.get('severity','').upper() in ('CRITICAL','HIGH')
+              for a in v.get('aliases',[{}])
+          )]
+          print('true' if critical else 'false')
+          print(f'Total: {len(vulns)} vulnerabilities, {len(critical)} critical/high', file=sys.stderr)
+          " || echo 'false')
+          echo "has-critical=${CRITICAL}" >> "$GITHUB_OUTPUT"
+
+          cat pip-audit-results.json
+          exit ${EXIT_CODE}
+
+      - name: Upload pip-audit results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pip-audit-results
+          path: pip-audit-results.json
+          retention-days: 30
+
+  # ── JavaScript dependency audit ───────────────────────────────────────────
+  npm-audit:
+    name: JavaScript — npm audit
+    runs-on: ubuntu-latest
+
+    outputs:
+      has-critical: ${{ steps.audit.outputs.has-critical }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: npm ci
+        working-directory: frontend
+        run: npm ci --quiet
+
+      - name: npm audit
+        id: audit
+        working-directory: frontend
+        run: |
+          set +e
+          npm audit --audit-level=critical --json > npm-audit-results.json
+          EXIT_CODE=$?
+          set -e
+
+          VULN_COUNT=$(node -e "
+          const d = require('./npm-audit-results.json');
+          const m = d.metadata?.vulnerabilities || {};
+          console.log((m.critical||0) + (m.high||0));
+          " || echo "0")
+
+          if [[ "${VULN_COUNT}" -gt 0 ]]; then
+            echo "has-critical=true" >> "$GITHUB_OUTPUT"
+            echo "::warning::Found ${VULN_COUNT} critical/high npm vulnerabilities"
+          else
+            echo "has-critical=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          cat npm-audit-results.json
+          exit ${EXIT_CODE}
+
+      - name: Upload npm audit results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: npm-audit-results
+          path: frontend/npm-audit-results.json
+          retention-days: 30
+
+  # ── Container image scan (Trivy) ──────────────────────────────────────────
+  trivy-scan:
+    name: Container images — Trivy
+    runs-on: ubuntu-latest
+
+    outputs:
+      has-critical: ${{ steps.check-results.outputs.has-critical }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: ACR login
+        run: az acr login --name ${{ secrets.ACR_LOGIN_SERVER }}
+
+      - name: Trivy scan — API image
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ secrets.ACR_LOGIN_SERVER }}/kaats-api:latest
+          format: sarif
+          output: trivy-api.sarif
+          severity: CRITICAL,HIGH
+          exit-code: "0"
+
+      - name: Trivy scan — Worker image
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ secrets.ACR_LOGIN_SERVER }}/kaats-worker:latest
+          format: sarif
+          output: trivy-worker.sarif
+          severity: CRITICAL,HIGH
+          exit-code: "0"
+
+      - name: Trivy scan — Frontend image
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ secrets.ACR_LOGIN_SERVER }}/kaats-frontend:latest
+          format: sarif
+          output: trivy-frontend.sarif
+          severity: CRITICAL,HIGH
+          exit-code: "0"
+
+      - name: Upload Trivy SARIFs to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: "."
+          category: trivy-scheduled
+
+      - name: Check for critical findings
+        id: check-results
+        run: |
+          CRITICAL=false
+          for file in trivy-api.sarif trivy-worker.sarif trivy-frontend.sarif; do
+            COUNT=$(python3 -c "
+          import json
+          with open('${file}') as f:
+              d = json.load(f)
+          runs = d.get('runs', [{}])
+          results = runs[0].get('results', [])
+          critical = [r for r in results if r.get('level') in ('error', 'warning')]
+          print(len(critical))
+          " || echo "0")
+            if [[ "${COUNT}" -gt 0 ]]; then
+              CRITICAL=true
+              echo "::warning::${COUNT} critical/high vulnerabilities found in ${file}"
+            fi
+          done
+          echo "has-critical=${CRITICAL}" >> "$GITHUB_OUTPUT"
+
+  # ── Create GitHub Issues for critical CVEs ────────────────────────────────
+  create-issues:
+    name: Create CVE GitHub Issues
+    runs-on: ubuntu-latest
+    needs: [python-audit, npm-audit, trivy-scan]
+    if: |
+      needs.python-audit.outputs.has-critical == 'true' ||
+      needs.npm-audit.outputs.has-critical == 'true' ||
+      needs.trivy-scan.outputs.has-critical == 'true'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download audit artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: "*-audit-results"
+          merge-multiple: true
+
+      - name: Check for existing open CVE issue (avoid duplicates)
+        id: find-issue
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const issues = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'security,automated',
+            });
+            const today = new Date().toISOString().split('T')[0];
+            const existing = issues.data.find(i => i.title.includes(today));
+            return existing ? existing.number : null;
+
+      - name: Create or update CVE issue
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const date = new Date().toISOString().split('T')[0];
+            const sections = [];
+
+            const pythonCritical = '${{ needs.python-audit.outputs.has-critical }}' === 'true';
+            const npmCritical = '${{ needs.npm-audit.outputs.has-critical }}' === 'true';
+            const trivyCritical = '${{ needs.trivy-scan.outputs.has-critical }}' === 'true';
+
+            if (pythonCritical) sections.push('- 🐍 **Python dependencies**: Critical/High CVEs found (see pip-audit-results artifact)');
+            if (npmCritical)    sections.push('- 📦 **npm dependencies**: Critical/High CVEs found (see npm-audit-results artifact)');
+            if (trivyCritical)  sections.push('- 🐳 **Container images**: Critical/High CVEs found (see GitHub Security tab)');
+
+            const body = `## Security Audit — ${date}
+
+            The daily security audit found critical or high severity vulnerabilities:
+
+            ${sections.join('\n')}
+
+            ### Next Steps
+
+            1. Review the [workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) for details
+            2. Check the GitHub [Security tab](${{ github.server_url }}/${{ github.repository }}/security) for SARIF findings
+            3. Update affected dependencies or apply patches
+            4. Re-run this workflow to verify fixes
+
+            > This issue was automatically created by the scheduled security audit.
+            `;
+
+            const existingIssue = ${{ steps.find-issue.outputs.result }};
+            if (existingIssue) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: existingIssue,
+                body: `**Updated ${date}**\n\n${body}`,
+              });
+              console.log(`Updated existing issue #${existingIssue}`);
+            } else {
+              const issue = await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: `[Security] Critical CVEs detected — ${date}`,
+                body,
+                labels: ['security', 'automated', 'high-priority'],
+              });
+              console.log(`Created issue #${issue.data.number}`);
+            }
+
+      - name: Notify Slack — critical CVEs found
+        uses: slackapi/slack-github-action@v1.27.0
+        with:
+          payload: |
+            {
+              "text": "🚨 *Daily security audit found critical vulnerabilities*",
+              "attachments": [{
+                "color": "danger",
+                "fields": [
+                  {"title": "Python deps", "value": "${{ needs.python-audit.outputs.has-critical == 'true' && '⚠️ Critical CVEs' || '✅ Clean' }}", "short": true},
+                  {"title": "npm deps", "value": "${{ needs.npm-audit.outputs.has-critical == 'true' && '⚠️ Critical CVEs' || '✅ Clean' }}", "short": true},
+                  {"title": "Container images", "value": "${{ needs.trivy-scan.outputs.has-critical == 'true' && '⚠️ Critical CVEs' || '✅ Clean' }}", "short": true},
+                  {"title": "Details", "value": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}", "short": false}
+                ]
+              }]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK

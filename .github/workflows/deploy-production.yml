@@ -1,0 +1,392 @@
+name: Deploy — Production
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Image tag to deploy (e.g. abc1234 or v1.2.3)"
+        required: true
+        type: string
+      confirm:
+        description: "Type DEPLOY to confirm production deployment"
+        required: true
+        type: string
+
+  push:
+    tags:
+      - "v*.*.*"
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false  # Never cancel a production deployment
+
+permissions:
+  contents: write   # For creating GitHub releases
+  id-token: write   # For OIDC Azure login
+  actions: read
+
+jobs:
+  # ── Guard: Validate confirmation ─────────────────────────────────────────
+  validate:
+    name: Validate deployment request
+    runs-on: ubuntu-latest
+    outputs:
+      image-tag: ${{ steps.resolve-tag.outputs.tag }}
+
+    steps:
+      - name: Check confirmation (manual dispatch only)
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          if [[ "${{ github.event.inputs.confirm }}" != "DEPLOY" ]]; then
+            echo "✗ Deployment not confirmed. Type DEPLOY in the confirmation field."
+            exit 1
+          fi
+          echo "✓ Deployment confirmed"
+
+      - name: Resolve image tag
+        id: resolve-tag
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "tag=${{ github.event.inputs.image_tag }}" >> "$GITHUB_OUTPUT"
+          else
+            # Tag push: use the git tag name (e.g. v1.2.3)
+            echo "tag=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+          fi
+
+  # ── Approval gate (GitHub Environment protection rule) ───────────────────
+  approve:
+    name: Await production approval
+    runs-on: ubuntu-latest
+    needs: validate
+    environment: production   # Requires 2 approvals configured in GitHub UI
+    steps:
+      - run: echo "Approved — proceeding with production deployment"
+
+  # ── Blue-Green Deployment ─────────────────────────────────────────────────
+  deploy:
+    name: Blue-green deployment
+    runs-on: ubuntu-latest
+    needs: [validate, approve]
+    environment: production
+
+    env:
+      RG: rg-kaats-prod
+      ACR: ${{ secrets.ACR_LOGIN_SERVER }}
+      IMAGE_TAG: ${{ needs.validate.outputs.image-tag }}
+
+    outputs:
+      api-fqdn: ${{ steps.get-url.outputs.api-fqdn }}
+      new-revision: ${{ steps.deploy-inactive.outputs.new-revision }}
+      old-revision: ${{ steps.get-active.outputs.old-revision }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Get currently active revision
+        id: get-active
+        run: |
+          OLD_REV=$(az containerapp revision list \
+            --name kaats-prod-api \
+            --resource-group "${RG}" \
+            --query "[?properties.trafficWeight==\`100\`].name | [0]" \
+            --output tsv)
+          echo "old-revision=${OLD_REV}" >> "$GITHUB_OUTPUT"
+          echo "Active revision: ${OLD_REV}"
+
+      - name: Deploy new revision with 0% traffic (inactive)
+        id: deploy-inactive
+        run: |
+          TAG="${IMAGE_TAG}"
+          TIMESTAMP=$(date +%s)
+
+          # Deploy new revision to all apps but set API traffic to 0%
+          az containerapp update \
+            --name kaats-prod-api \
+            --resource-group "${RG}" \
+            --image "${ACR}/kaats-api:${TAG}" \
+            --revision-suffix "blue-${TIMESTAMP}" \
+            --output none
+
+          # Get the new revision name
+          NEW_REV=$(az containerapp revision list \
+            --name kaats-prod-api \
+            --resource-group "${RG}" \
+            --query "sort_by([],&properties.createdTime)[-1].name" \
+            --output tsv)
+          echo "new-revision=${NEW_REV}" >> "$GITHUB_OUTPUT"
+          echo "New revision: ${NEW_REV}"
+
+          # Set traffic to 0% on new revision — keep 100% on old
+          az containerapp ingress traffic set \
+            --name kaats-prod-api \
+            --resource-group "${RG}" \
+            --revision-weight \
+              "${{ steps.get-active.outputs.old-revision }}=100" \
+              "${NEW_REV}=0" \
+            --output none
+
+          # Deploy worker and frontend (no traffic splitting needed)
+          az containerapp update \
+            --name kaats-prod-worker \
+            --resource-group "${RG}" \
+            --image "${ACR}/kaats-worker:${TAG}" \
+            --output none
+
+          az containerapp update \
+            --name kaats-prod-frontend \
+            --resource-group "${RG}" \
+            --image "${ACR}/kaats-frontend:${TAG}" \
+            --output none
+
+      - name: Get staging API URL for smoke tests
+        id: get-url
+        run: |
+          FQDN=$(az containerapp show \
+            --name kaats-prod-api \
+            --resource-group "${RG}" \
+            --query "properties.configuration.ingress.fqdn" \
+            --output tsv)
+          echo "api-fqdn=${FQDN}" >> "$GITHUB_OUTPUT"
+
+      - name: Run smoke tests against inactive revision
+        id: smoke-inactive
+        run: |
+          NEW_REV="${{ steps.deploy-inactive.outputs.new-revision }}"
+          API_URL="https://${{ steps.get-url.outputs.api-fqdn }}"
+
+          # Use revision-specific URL for testing before traffic shift
+          REV_URL=$(az containerapp revision show \
+            --name kaats-prod-api \
+            --resource-group "${RG}" \
+            --revision "${NEW_REV}" \
+            --query "properties.fqdn" \
+            --output tsv 2>/dev/null || echo "")
+
+          TARGET="${REV_URL:-${API_URL}}"
+          echo "Smoke-testing new revision at: https://${TARGET}"
+
+          for i in $(seq 1 8); do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" "https://${TARGET}/health" || echo "000")
+            if [[ "${STATUS}" == "200" ]]; then
+              echo "✓ Health check passed"
+              break
+            fi
+            echo "Attempt ${i}: got ${STATUS}, retrying in 15s..."
+            sleep 15
+            if [[ $i -eq 8 ]]; then
+              echo "✗ Smoke tests failed on inactive revision"
+              exit 1
+            fi
+          done
+
+      - name: Shift 10% traffic to new revision
+        run: |
+          az containerapp ingress traffic set \
+            --name kaats-prod-api \
+            --resource-group "${RG}" \
+            --revision-weight \
+              "${{ steps.get-active.outputs.old-revision }}=90" \
+              "${{ steps.deploy-inactive.outputs.new-revision }}=10" \
+            --output none
+          echo "Traffic: 90% old / 10% new"
+
+      - name: Monitor error rate for 5 minutes
+        id: monitor
+        run: |
+          echo "Monitoring error rate for 5 minutes..."
+          END=$(($(date +%s) + 300))
+          FAILURES=0
+
+          while [[ $(date +%s) -lt $END ]]; do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+              "https://${{ steps.get-url.outputs.api-fqdn }}/health" || echo "000")
+
+            if [[ "${STATUS}" != "200" ]]; then
+              FAILURES=$((FAILURES + 1))
+              echo "Error detected (${STATUS}), failure count: ${FAILURES}"
+            fi
+
+            # Fail fast if we see 3+ consecutive failures
+            if [[ $FAILURES -ge 3 ]]; then
+              echo "error-rate=high" >> "$GITHUB_OUTPUT"
+              echo "✗ Error threshold exceeded — triggering rollback"
+              exit 1
+            fi
+            sleep 15
+          done
+
+          echo "error-rate=ok" >> "$GITHUB_OUTPUT"
+          echo "✓ Error rate acceptable over 5-minute window"
+
+      - name: Shift 100% traffic to new revision
+        if: steps.monitor.outputs.error-rate == 'ok'
+        run: |
+          az containerapp ingress traffic set \
+            --name kaats-prod-api \
+            --resource-group "${RG}" \
+            --revision-weight \
+              "${{ steps.deploy-inactive.outputs.new-revision }}=100" \
+            --output none
+          echo "✓ 100% traffic on new revision: ${{ steps.deploy-inactive.outputs.new-revision }}"
+
+      - name: Deactivate old revision
+        if: steps.monitor.outputs.error-rate == 'ok'
+        run: |
+          OLD_REV="${{ steps.get-active.outputs.old-revision }}"
+          if [[ -n "${OLD_REV}" ]]; then
+            az containerapp revision deactivate \
+              --name kaats-prod-api \
+              --resource-group "${RG}" \
+              --revision "${OLD_REV}" \
+              --output none
+            echo "Deactivated old revision: ${OLD_REV}"
+          fi
+
+      - name: ROLLBACK — revert traffic on error
+        if: failure() && steps.deploy-inactive.outputs.new-revision != ''
+        run: |
+          echo "⚠️  Rolling back — restoring 100% traffic to old revision"
+          OLD_REV="${{ steps.get-active.outputs.old-revision }}"
+          NEW_REV="${{ steps.deploy-inactive.outputs.new-revision }}"
+
+          if [[ -n "${OLD_REV}" ]]; then
+            az containerapp ingress traffic set \
+              --name kaats-prod-api \
+              --resource-group "${RG}" \
+              --revision-weight "${OLD_REV}=100" \
+              --output none
+            echo "✓ Traffic restored to ${OLD_REV}"
+          fi
+
+          # Deactivate the bad revision
+          if [[ -n "${NEW_REV}" ]]; then
+            az containerapp revision deactivate \
+              --name kaats-prod-api \
+              --resource-group "${RG}" \
+              --revision "${NEW_REV}" \
+              --output none || true
+            echo "Deactivated failed revision: ${NEW_REV}"
+          fi
+          exit 1
+
+  # ── Run DB migrations after traffic is confirmed stable ──────────────────
+  migrate:
+    name: Run database migrations
+    runs-on: ubuntu-latest
+    needs: [validate, approve]
+    environment: production
+
+    steps:
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Run Alembic migrations
+        run: |
+          az containerapp exec \
+            --name kaats-prod-api \
+            --resource-group rg-kaats-prod \
+            --command "alembic upgrade head" \
+            --output table
+
+  # ── GitHub Release ────────────────────────────────────────────────────────
+  release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: [validate, deploy]
+    if: startsWith(github.ref, 'refs/tags/')
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          if [[ -n "${PREV_TAG}" ]]; then
+            CHANGELOG=$(git log "${PREV_TAG}..HEAD" --oneline --no-merges)
+          else
+            CHANGELOG=$(git log --oneline --no-merges -20)
+          fi
+          echo "changelog<<EOF" >> "$GITHUB_OUTPUT"
+          echo "${CHANGELOG}" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: "KAATS ${{ github.ref_name }}"
+          body: |
+            ## Changes
+
+            ${{ steps.changelog.outputs.changelog }}
+
+            ## Deployment
+
+            - **Image tag:** `${{ needs.validate.outputs.image-tag }}`
+            - **API:** https://${{ needs.deploy.outputs.api-fqdn }}
+            - **Deployed by:** ${{ github.actor }}
+          generate_release_notes: true
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-rc') || contains(github.ref_name, '-beta') }}
+
+  # ── Notify ────────────────────────────────────────────────────────────────
+  notify:
+    name: Notify stakeholders
+    runs-on: ubuntu-latest
+    needs: [validate, deploy, migrate]
+    if: always()
+
+    steps:
+      - name: Notify Slack — success
+        if: needs.deploy.result == 'success'
+        uses: slackapi/slack-github-action@v1.27.0
+        with:
+          payload: |
+            {
+              "text": "🚀 *Production deploy succeeded*",
+              "attachments": [{
+                "color": "good",
+                "fields": [
+                  {"title": "Version", "value": "${{ needs.validate.outputs.image-tag }}", "short": true},
+                  {"title": "Deployed by", "value": "${{ github.actor }}", "short": true},
+                  {"title": "API URL", "value": "https://${{ needs.deploy.outputs.api-fqdn }}", "short": false}
+                ]
+              }]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
+
+      - name: Notify Slack — failure / rollback
+        if: needs.deploy.result == 'failure'
+        uses: slackapi/slack-github-action@v1.27.0
+        with:
+          payload: |
+            {
+              "text": "🔴 *Production deploy FAILED — rollback initiated*",
+              "attachments": [{
+                "color": "danger",
+                "fields": [
+                  {"title": "Version attempted", "value": "${{ needs.validate.outputs.image-tag }}", "short": true},
+                  {"title": "Triggered by", "value": "${{ github.actor }}", "short": true},
+                  {"title": "Workflow", "value": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}", "short": false}
+                ]
+              }]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK

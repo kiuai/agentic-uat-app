@@ -1,0 +1,204 @@
+name: Deploy — Staging
+
+on:
+  workflow_run:
+    workflows: ["Build & Push Images"]
+    branches: [main]
+    types: [completed]
+
+concurrency:
+  group: deploy-staging
+  cancel-in-progress: false  # Never cancel an in-progress deployment
+
+permissions:
+  contents: read
+  id-token: write
+  actions: read
+
+jobs:
+  # ── Guard: only run when Build workflow succeeded ─────────────────────────
+  check-build:
+    name: Check build result
+    runs-on: ubuntu-latest
+    if: github.event.workflow_run.conclusion == 'success'
+    steps:
+      - run: echo "Build succeeded — proceeding with staging deployment"
+
+  # ── Migrate ───────────────────────────────────────────────────────────────
+  migrate:
+    name: Run database migrations
+    runs-on: ubuntu-latest
+    needs: check-build
+    environment: staging
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Run Alembic migrations via Container Apps exec
+        run: |
+          # Execute migration in the API container app
+          az containerapp exec \
+            --name kaats-staging-api \
+            --resource-group rg-kaats-staging \
+            --command "alembic upgrade head" \
+            --output table
+
+  # ── Deploy ────────────────────────────────────────────────────────────────
+  deploy:
+    name: Deploy to staging
+    runs-on: ubuntu-latest
+    needs: migrate
+    environment: staging
+
+    outputs:
+      api-fqdn: ${{ steps.get-url.outputs.api-fqdn }}
+      image-tag: ${{ steps.get-sha.outputs.sha }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get SHA from triggering workflow
+        id: get-sha
+        run: |
+          echo "sha=$(echo '${{ github.event.workflow_run.head_sha }}' | cut -c1-7)" >> "$GITHUB_OUTPUT"
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Deploy new revisions to staging
+        run: |
+          SHA="${{ steps.get-sha.outputs.sha }}"
+          RG="rg-kaats-staging"
+          ACR="${{ secrets.ACR_LOGIN_SERVER }}"
+
+          for app_suffix in api worker frontend; do
+            echo "Deploying kaats-staging-${app_suffix} → ${app_suffix}:${SHA}"
+            az containerapp update \
+              --name "kaats-staging-${app_suffix}" \
+              --resource-group "${RG}" \
+              --image "${ACR}/kaats-${app_suffix}:${SHA}" \
+              --output none
+          done
+
+      - name: Get staging API URL
+        id: get-url
+        run: |
+          FQDN=$(az containerapp show \
+            --name kaats-staging-api \
+            --resource-group rg-kaats-staging \
+            --query "properties.configuration.ingress.fqdn" \
+            --output tsv)
+          echo "api-fqdn=${FQDN}" >> "$GITHUB_OUTPUT"
+          echo "Staging API: https://${FQDN}"
+
+  # ── Smoke Tests ───────────────────────────────────────────────────────────
+  smoke-test:
+    name: Smoke tests
+    runs-on: ubuntu-latest
+    needs: deploy
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Wait for Container Apps to stabilise
+        run: sleep 30
+
+      - name: Health check — API
+        run: |
+          API_URL="https://${{ needs.deploy.outputs.api-fqdn }}"
+          echo "Testing ${API_URL}/health"
+
+          for i in $(seq 1 10); do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" "${API_URL}/health" || echo "000")
+            if [[ "${STATUS}" == "200" ]]; then
+              echo "✓ Health check passed (attempt ${i})"
+              exit 0
+            fi
+            echo "Attempt ${i}: got ${STATUS}, retrying in 15s..."
+            sleep 15
+          done
+          echo "✗ Health check failed after 10 attempts"
+          exit 1
+
+      - name: API endpoint smoke tests
+        run: |
+          API_URL="https://${{ needs.deploy.outputs.api-fqdn }}"
+
+          # Unauthenticated endpoints should return 401 (not 500)
+          for path in /api/v1/projects /api/v1/auth/me; do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" "${API_URL}${path}")
+            if [[ "${STATUS}" == "500" || "${STATUS}" == "000" ]]; then
+              echo "✗ ${path} returned unexpected status ${STATUS}"
+              exit 1
+            fi
+            echo "✓ ${path} → ${STATUS}"
+          done
+
+      - name: OpenAPI schema reachable
+        run: |
+          API_URL="https://${{ needs.deploy.outputs.api-fqdn }}"
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" "${API_URL}/openapi.json")
+          if [[ "${STATUS}" != "200" ]]; then
+            echo "✗ /openapi.json returned ${STATUS}"
+            exit 1
+          fi
+          echo "✓ OpenAPI schema accessible"
+
+  # ── Notify ────────────────────────────────────────────────────────────────
+  notify:
+    name: Slack notification
+    runs-on: ubuntu-latest
+    needs: [deploy, smoke-test]
+    if: always()
+
+    steps:
+      - name: Notify Slack — success
+        if: needs.smoke-test.result == 'success'
+        uses: slackapi/slack-github-action@v1.27.0
+        with:
+          payload: |
+            {
+              "text": "✅ *Staging deploy succeeded*",
+              "attachments": [{
+                "color": "good",
+                "fields": [
+                  {"title": "Environment", "value": "staging", "short": true},
+                  {"title": "Image tag", "value": "${{ needs.deploy.outputs.image-tag }}", "short": true},
+                  {"title": "API URL", "value": "https://${{ needs.deploy.outputs.api-fqdn }}", "short": false},
+                  {"title": "Commit", "value": "${{ github.event.workflow_run.head_commit.message }}", "short": false}
+                ]
+              }]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
+
+      - name: Notify Slack — failure
+        if: needs.smoke-test.result != 'success' || needs.deploy.result != 'success'
+        uses: slackapi/slack-github-action@v1.27.0
+        with:
+          payload: |
+            {
+              "text": "❌ *Staging deploy failed*",
+              "attachments": [{
+                "color": "danger",
+                "fields": [
+                  {"title": "Environment", "value": "staging", "short": true},
+                  {"title": "Workflow", "value": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}", "short": false}
+                ]
+              }]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
