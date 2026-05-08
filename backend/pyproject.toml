@@ -1,0 +1,109 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "kaats-backend"
+version = "0.1.0"
+description = "KIU AI Automated Test System — API and Worker backend"
+requires-python = ">=3.12"
+dependencies = [
+    # Web framework
+    "fastapi[standard]>=0.115.0",
+    "uvicorn[standard]>=0.30.0",
+    # Database — SQLAlchemy async with ODBC driver for Azure SQL
+    "sqlalchemy[asyncio]>=2.0.36",
+    "alembic>=1.13.0",
+    "aioodbc>=0.5.0",
+    "pyodbc>=5.1.0",
+    # Pydantic
+    "pydantic>=2.9.0",
+    "pydantic-settings>=2.6.0",
+    # Azure SDKs
+    "azure-identity>=1.17.0",
+    "azure-keyvault-secrets>=4.8.0",
+    "azure-servicebus>=7.12.0",
+    "azure-storage-blob>=12.22.0",
+    "azure-cosmos>=4.7.0",
+    # AI / LangChain
+    "openai>=1.51.0",
+    "langchain>=0.3.0",
+    "langchain-openai>=0.2.0",
+    "langchain-core>=0.3.0",
+    # Auth
+    "msal>=1.30.0",
+    "python-jose[cryptography]>=3.3.0",
+    "passlib[bcrypt]>=1.7.4",
+    # Crawler
+    "playwright>=1.47.0",
+    # Observability
+    "structlog>=24.4.0",
+    "opencensus-ext-azure>=1.1.13",
+    # HTTP client
+    "httpx>=0.27.0",
+    # Utilities
+    "python-multipart>=0.0.12",
+    "jinja2>=3.1.4",
+    "python-dateutil>=2.9.0",
+    "tenacity>=9.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3.0",
+    "pytest-asyncio>=0.24.0",
+    "pytest-cov>=5.0.0",
+    "pytest-httpx>=0.32.0",
+    "factory-boy>=3.3.0",
+    "faker>=28.0.0",
+    "mypy>=1.10.0",
+    "ruff>=0.4.4",
+    "types-passlib",
+    "sqlalchemy[mypy]",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["app", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # flake8-bugbear
+    "C4",  # flake8-comprehensions
+    "UP",  # pyupgrade
+    "ARG", # flake8-unused-arguments
+    "SIM", # flake8-simplify
+]
+ignore = [
+    "E501",  # line-too-long (handled by formatter)
+    "B008",  # do not perform function calls in default arguments (FastAPI pattern)
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["app"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+ignore_missing_imports = true
+plugins = ["pydantic.mypy", "sqlalchemy.ext.mypy.plugin"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "--cov=app --cov-report=term-missing --cov-fail-under=70"
+
+[tool.coverage.run]
+source = ["app"]
+omit = ["tests/*", "migrations/*"]

@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block content %}
+  <h1>Dashboard</h1>
+
+  <div class="grid">
+    <div class="card">
+      <h2>System Status</h2>
+      <ul>
+        <li>Database: <span class="pill">{{ status.db }}</span></li>
+        <li>Redis: <span class="pill">{{ status.redis }}</span></li>
+        <li>Worker: <span class="pill">{{ status.worker }}</span></li>
+      </ul>
+    </div>
+    <div class="card">
+      <h2>Projects</h2>
+      <ul>
+        {% for p in projects[:8] %}
+          <li><strong>{{ p.name }}</strong> <span class="muted">#{{ p.id }}</span></li>
+        {% else %}
+          <li class="muted">No projects yet.</li>
+        {% endfor %}
+      </ul>
+      <a class="link" href="/ui/projects">Manage projects →</a>
+    </div>
+
+    <div class="card">
+      <h2>Applications</h2>
+      <ul>
+        {% for a in apps[:8] %}
+          <li><strong>{{ a.name }}</strong> <span class="muted">{{ a.environment }}</span></li>
+        {% else %}
+          <li class="muted">No applications yet.</li>
+        {% endfor %}
+      </ul>
+      <a class="link" href="/ui/applications">Manage applications →</a>
+    </div>
+
+    <div class="card">
+      <h2>Recent Bundles</h2>
+      <ul>
+        {% for b in bundles %}
+          <li>#{{ b.id }} <span class="pill">{{ b.status.value }}</span> <span class="muted">{{ b.version_hash[:10] }}…</span></li>
+        {% else %}
+          <li class="muted">No bundles yet.</li>
+        {% endfor %}
+      </ul>
+      <a class="link" href="/ui/bundles">Go to bundles →</a>
+    </div>
+
+    <div class="card">
+      <h2>Recent Runs</h2>
+      <ul>
+        {% for r in runs %}
+          <li>#{{ r.id }} <span class="pill">{{ r.status.value }}</span> <span class="muted">bundle {{ r.bundle_id }}</span></li>
+        {% else %}
+          <li class="muted">No runs yet.</li>
+        {% endfor %}
+      </ul>
+      <a class="link" href="/ui/runs">Go to runs →</a>
+    </div>
+  </div>
+{% endblock %}

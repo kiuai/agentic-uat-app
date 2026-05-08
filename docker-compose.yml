@@ -1,0 +1,133 @@
+services:
+  # ── API ────────────────────────────────────────────────────────────────────
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    env_file: .env
+    ports:
+      - "8000:8000"
+    depends_on:
+      sqlserver:
+        condition: service_healthy
+      azurite:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+    networks:
+      - kaats
+
+  # ── Worker ─────────────────────────────────────────────────────────────────
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.worker
+    env_file: .env
+    depends_on:
+      sqlserver:
+        condition: service_healthy
+      azurite:
+        condition: service_started
+    networks:
+      - kaats
+
+  # ── Frontend ───────────────────────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      target: development
+    env_file: .env
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./frontend/src:/app/src
+      - ./frontend/public:/app/public
+    networks:
+      - kaats
+
+  # ── Azure SQL (local dev: SQL Server) ──────────────────────────────────────
+  sqlserver:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: KaatsDevPass!2026
+      MSSQL_PID: Developer
+    ports:
+      - "1433:1433"
+    volumes:
+      - sqldata:/var/opt/mssql
+    healthcheck:
+      test: ["CMD", "/opt/mssql-tools18/bin/sqlcmd", "-S", "localhost",
+             "-U", "sa", "-P", "KaatsDevPass!2026", "-C",
+             "-Q", "SELECT 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    networks:
+      - kaats
+
+  # ── Azurite (Azure Blob + Queue Storage emulator) ──────────────────────────
+  azurite:
+    image: mcr.microsoft.com/azure-storage/azurite:latest
+    command: "azurite --blobHost 0.0.0.0 --queueHost 0.0.0.0 --tableHost 0.0.0.0 --skipApiVersionCheck"
+    ports:
+      - "10000:10000"   # Blob
+      - "10001:10001"   # Queue
+      - "10002:10002"   # Table
+    volumes:
+      - azurite_data:/data
+    networks:
+      - kaats
+
+  # ── Service Bus Emulator ───────────────────────────────────────────────────
+  servicebus-emulator:
+    image: mcr.microsoft.com/azure-messaging/servicebus-emulator:latest
+    environment:
+      ACCEPT_EULA: "Y"
+    ports:
+      - "5672:5672"
+      - "9354:9354"
+    volumes:
+      - servicebus_data:/data
+    networks:
+      - kaats
+
+  # ── DB Init (creates kaats_dev database and runs Alembic) ──────────────────
+  db-init:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    env_file: .env
+    command: >
+      bash -c "
+        python -c \"
+import pyodbc, os, time
+cs = f\\\"DRIVER={{ODBC Driver 18 for SQL Server}};SERVER={os.getenv('AZURE_SQL_SERVER')};UID={os.getenv('AZURE_SQL_USERNAME')};PWD={os.getenv('AZURE_SQL_PASSWORD')};TrustServerCertificate=yes\\\"
+for i in range(10):
+    try:
+        conn = pyodbc.connect(cs, autocommit=True)
+        conn.execute(f\\\"IF NOT EXISTS (SELECT 1 FROM sys.databases WHERE name='{os.getenv('AZURE_SQL_DATABASE')}') CREATE DATABASE [{os.getenv('AZURE_SQL_DATABASE')}]\\\")
+        conn.close(); break
+    except Exception as e:
+        print(f'Waiting for SQL Server... {e}'); time.sleep(3)
+\" && alembic upgrade head"
+    depends_on:
+      sqlserver:
+        condition: service_healthy
+    networks:
+      - kaats
+
+volumes:
+  sqldata:
+  azurite_data:
+  servicebus_data:
+
+networks:
+  kaats:
+    driver: bridge

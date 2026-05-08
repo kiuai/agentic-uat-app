@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block content %}
+  <h1>Runs</h1>
+
+  <div class="card">
+    <table class="table">
+      <thead><tr><th>Run ID</th><th>Bundle</th><th>Status</th><th>Started</th><th>Evidence</th><th>Exports</th></tr></thead>
+      <tbody>
+      {% for r in runs %}
+        <tr>
+          <td>{{ r.id }}</td>
+          <td>{{ r.bundle_id }}</td>
+          <td><span class="pill">{{ r.status.value }}</span></td>
+          <td class="muted">{{ r.started_at }}</td>
+          <td><a class="link" href="/ui/runs/{{ r.id }}/evidence">View →</a></td>
+          <td>
+            <a class="link" href="/ui/runs/{{ r.id }}/rtm">RTM.xlsx</a>
+            <span class="muted">|</span>
+            <a class="link" href="/ui/runs/{{ r.id }}/report">Report.pdf</a>
+          </td>
+        </tr>
+      {% else %}
+        <tr><td colspan="5" class="muted">No runs yet.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+{% endblock %}

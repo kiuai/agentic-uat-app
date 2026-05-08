@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block content %}
+  <h1>Page</h1>
+  <div class="card">
+    <div><span class="muted">URL:</span> <span class="mono">{{ page.url }}</span></div>
+    <div><span class="muted">Title:</span> {{ page.title or "" }}</div>
+    <div><span class="muted">DOM Hash:</span> <span class="mono">{{ page.dom_hash }}</span></div>
+    <div><span class="muted">Last Seen:</span> <span class="muted">{{ page.discovered_at }}</span></div>
+    <p><a class="link" href="/ui/applications/{{ page.application_id }}/explore-map">Back to map →</a></p>
+  </div>
+
+  <div class="card" style="margin-top:14px;">
+    <h2>Discovered Elements</h2>
+    <table class="table">
+      <thead><tr><th>ID</th><th>Role</th><th>Label</th><th>Type</th><th>Selector</th></tr></thead>
+      <tbody>
+      {% for e in elements %}
+        <tr>
+          <td>{{ e.id }}</td>
+          <td>{{ e.role or "" }}</td>
+          <td>{{ e.label or "" }}</td>
+          <td>{{ e.type or "" }}</td>
+          <td class="mono">{{ e.selector }}</td>
+        </tr>
+      {% else %}
+        <tr><td colspan="5" class="muted">No elements recorded.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+{% endblock %}

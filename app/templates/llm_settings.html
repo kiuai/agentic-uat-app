@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block content %}
+  <h1>LLM Settings</h1>
+  <p class="muted">These settings apply per Project and override environment variables for generation jobs.</p>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Select project</h2>
+      <form method="get" action="/ui/settings/llm" class="form">
+        <select name="project_id" required>
+          {% for p in projects %}
+            <option value="{{ p.id }}" {% if p.id == selected_project_id %}selected{% endif %}>{{ p.name }} (#{{ p.id }})</option>
+          {% endfor %}
+        </select>
+        <button type="submit">Load</button>
+      </form>
+    </div>
+
+    <div class="card">
+      <h2>Configure</h2>
+      {% if not selected_project_id %}
+        <p class="muted">Create a project first.</p>
+      {% else %}
+      <form method="post" action="/ui/settings/llm" class="form">
+        <input type="hidden" name="project_id" value="{{ selected_project_id }}"/>
+
+        <label>Provider</label>
+        <select name="provider">
+          <option value="stub" {% if current and current.provider == 'stub' %}selected{% endif %}>stub</option>
+          <option value="openai" {% if current and current.provider == 'openai' %}selected{% endif %}>openai</option>
+          <option value="azure" {% if current and current.provider == 'azure' %}selected{% endif %}>azure</option>
+        </select>
+
+        <label>Model</label>
+        <input name="model" value="{{ current.model if current else 'gpt-5' }}"/>
+
+        <div class="card" style="background:#0f1422;border-color:#2a3a60;">
+          <h2>Azure OpenAI</h2>
+          <p class="muted small">These values update the server .env. Restart containers after saving.</p>
+          <label>Endpoint</label>
+          <input name="azure_endpoint" value="{{ azure_endpoint or '' }}" placeholder="https://your-resource.openai.azure.com" />
+          <label>Deployment</label>
+          <input name="azure_deployment" value="{{ azure_deployment or '' }}" placeholder="gpt-5.2-chat" />
+          <label>API Version</label>
+          <input name="azure_api_version" value="{{ azure_api_version or '' }}" placeholder="2025-04-01-preview" />
+          <label>API Key</label>
+          <input name="azure_api_key" type="password" value="" placeholder="leave blank to keep existing" />
+        </div>
+
+        <div class="row">
+          <div style="flex:1">
+            <label>Temperature</label>
+            <input name="temperature" type="number" step="0.1" value="{{ current.temperature if current else 0.2 }}"/>
+          </div>
+          <div style="flex:1">
+            <label>Max output tokens</label>
+            <input name="max_output_tokens" type="number" value="{{ current.max_output_tokens if current else 2500 }}"/>
+          </div>
+        </div>
+
+        <label>
+          <input type="checkbox" name="strict_json" {% if (current and current.strict_json) or (not current) %}checked{% endif %}/>
+          Strict JSON (structured output)
+        </label>
+
+        <button type="submit">Save settings</button>
+      </form>
+
+      {% if current %}
+        <p class="muted small">Last updated: {{ current.updated_at }}</p>
+      {% endif %}
+      {% endif %}
+    </div>
+  </div>
+{% endblock %}

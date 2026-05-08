@@ -1,0 +1,75 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>{{ title or "Agentic UAT App" }}</title>
+  <link rel="stylesheet" href="/ui/static/app.css"/>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><a href="/ui">Agentic UAT</a></div>
+    {% if user %}
+      <div class="userbox">
+        <span class="muted">User:</span> <strong>{{ user.user_id }}</strong>
+        <span class="pill">{{ roles|join(", ") }}</span>
+        <a class="link" href="/ui/logout">Logout</a>
+      </div>
+    {% endif %}
+  </header>
+
+  {% if user %}
+  <nav class="nav">
+    <a href="/ui">Dashboard</a>
+    <a href="/ui/projects">Projects</a>
+    <a href="/ui/applications">Applications</a>
+    <a href="/ui/bundles">Test Bundles</a>
+    <a href="/ui/jobs/demo" class="muted" style="display:none">Job Status</a>
+    <a href="/ui/runs">Runs</a>
+    <a href="/ui/projects">Requirements</a>
+    <a href="/ui/settings/llm">LLM Settings</a>
+    {% if "Administrator" in roles %}
+      <a href="/ui/admin/users">Administrator</a>
+    {% endif %}
+  </nav>
+  {% endif %}
+
+  <div id="toast" class="toast" style="display:none;"></div>
+
+  <main class="container">
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer class="footer">
+    <span class="muted">v0.1.0 • API docs at <a href="/docs">/docs</a></span>
+  </footer>
+  <script>
+    (function () {
+      var params = new URLSearchParams(window.location.search);
+      var msg = params.get("msg");
+      var err = params.get("e");
+      var toast = document.getElementById("toast");
+      if (!toast) return;
+      var map = {
+        "developed": "Test script added to bundle.",
+        "generated": "Bundle generated.",
+        "created": "User created successfully.",
+        "deactivated": "User deactivated.",
+        "activated": "User activated.",
+        "password_reset": "Password reset.",
+        "roles_updated": "Roles updated.",
+        "self_approve": "You cannot approve your own work.",
+        "forbidden": "You do not have access to that action.",
+        "missing_key": "LLM key is missing. Configure OpenAI/Azure.",
+        "last_admin": "At least one Administrator must remain active."
+      };
+      var text = msg ? (map[msg] || msg) : (err ? (map[err] || err) : null);
+      if (text) {
+        toast.textContent = text;
+        toast.style.display = "block";
+        setTimeout(function () { toast.style.display = "none"; }, 3500);
+      }
+    })();
+  </script>
+</body>
+</html>

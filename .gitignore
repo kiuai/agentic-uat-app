@@ -1,0 +1,74 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+*.whl
+.venv/
+venv/
+env/
+.env
+!.env.example
+*.pyo
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+
+# Alembic
+backend/migrations/versions/*.pyc
+
+# Node / Frontend
+node_modules/
+frontend/dist/
+frontend/.next/
+frontend/build/
+*.tsbuildinfo
+.eslintcache
+
+# Environment
+.env
+.env.local
+.env.production
+.env.staging
+!.env.example
+!backend/.env.example
+!frontend/.env.example
+
+# Docker
+docker-compose.override.local.yml
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Azure
+.azure/
+*.bicepparam.local
+
+# Secrets / Certs
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Logs
+*.log
+logs/
+
+# Test artifacts
+playwright-report/
+test-results/
+screenshots/

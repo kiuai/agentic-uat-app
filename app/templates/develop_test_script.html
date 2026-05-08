@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block content %}
+  <h1>Develop Test Script</h1>
+  <p class="muted">Describe the test case and we will generate steps ready to run.</p>
+  {% if llm_provider == "stub" %}
+    <div class="alert" style="background:#2a2a3a;border-color:#3a4a7a">
+      LLM provider is set to <strong>{{ llm_provider }}</strong>. For description-driven scripts, configure OpenAI or Azure in LLM Settings.
+    </div>
+  {% endif %}
+
+  {% if error == "missing" %}
+    <div class="alert">Application not found.</div>
+  {% endif %}
+  {% if error == "empty" %}
+    <div class="alert">Unable to generate a test case from that description.</div>
+  {% endif %}
+  {% if error == "missing_key" %}
+    <div class="alert">OpenAI API key is missing. Set <code>OPENAI_API_KEY</code> or switch provider to stub in LLM Settings.</div>
+  {% endif %}
+
+  <div class="card">
+    <h2>Bundle #{{ bundle.id }}</h2>
+    <form method="post" action="/ui/bundles/{{ bundle.id }}/develop" class="form">
+      <label>Application (context)</label>
+      <select name="application_id" required>
+        {% for a in apps %}
+          <option value="{{ a.id }}">{{ a.name }} (#{{ a.id }})</option>
+        {% endfor %}
+      </select>
+
+      <label>Test case description</label>
+      <textarea name="description" rows="6" placeholder="Describe the intent, key steps, and expected outcome..." required></textarea>
+
+      <button type="submit">Generate Test Case</button>
+    </form>
+  </div>
+
+  <a class="link" href="/ui/bundles/{{ bundle.id }}">Back to bundle →</a>
+{% endblock %}

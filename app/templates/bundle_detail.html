@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block content %}
+  <h1>Bundle #{{ bundle.id }} <span class="pill">{{ bundle.status.value }}</span></h1>
+  <p class="muted">Version: <span class="mono">{{ bundle.version_hash }}</span></p>
+  {% if msg == "developed" %}
+    <div class="alert" style="background:#1b3a2a;border-color:#2c6b4a">Test script added to this bundle.</div>
+  {% endif %}
+
+  <div class="card">
+    <h2>Tests</h2>
+    {% for t in tests %}
+      <div class="card" style="margin-top:12px; background:#0f1422;">
+        <h3 style="margin:0 0 6px 0;">{{ t.test_id }} — {{ t.title }}</h3>
+        <p class="muted small">{{ t.objective }}</p>
+
+        <table class="table">
+          <thead><tr><th>#</th><th>Action</th><th>Selector JSON</th><th>Input</th><th>Expected</th><th>Critical</th><th>Save</th></tr></thead>
+          <tbody>
+          {% for s in steps[t.id] %}
+            <tr>
+              <form method="post" action="/ui/bundles/{{ bundle.id }}/steps/{{ s.id }}/edit">
+                <td class="mono">{{ s.step_index }}</td>
+                <td><input name="action" value="{{ s.action }}" /></td>
+                <td><textarea name="selector_json" rows="2" class="mono">{{ s.selector_json or "" }}</textarea></td>
+                <td><input name="input_value" value="{{ s.input or "" }}" /></td>
+                <td><input name="expected" value="{{ s.expected or "" }}" /></td>
+                <td style="text-align:center;">
+                  <input type="checkbox" name="critical" {% if s.critical %}checked{% endif %}/>
+                </td>
+                <td><button type="submit">Save</button></td>
+              </form>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% endfor %}
+  </div>
+
+  <div class="card" style="margin-top:14px;">
+    <h2>Actions</h2>
+    <a class="link" href="/ui/bundles/{{ bundle.id }}/develop">Develop Test Script →</a>
+    <form method="post" action="/ui/bundles/{{ bundle.id }}/approve" style="display:inline">
+      <input type="hidden" name="reason" value="Reviewed in UI"/>
+      <button type="submit">Approve</button>
+    </form>
+    <form method="post" action="/ui/bundles/{{ bundle.id }}/run" style="display:inline">
+      <button type="submit">Run</button>
+    </form>
+    <a class="link" href="/ui/bundles">Back to bundles →</a>
+  </div>
+{% endblock %}

@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block content %}
+  <h1>Evidence — Run #{{ run_id }}</h1>
+
+  <div class="card">
+    <ul class="gallery">
+      {% for e in evidence %}
+        <li>
+          <div class="mono small">{{ e.sha256[:12] }}…</div>
+          <a class="link" href="/ui/evidence/file?path={{ e.path | urlencode }}">Download / View</a>
+          <div class="muted small">{{ e.path }}</div>
+        </li>
+      {% else %}
+        <li class="muted">No evidence found for this run.</li>
+      {% endfor %}
+    </ul>
+  </div>
+{% endblock %}

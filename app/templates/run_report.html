@@ -1,0 +1,47 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>Run Report {{ run.id }}</title>
+  <style>
+    body { font-family: Arial, sans-serif; font-size: 12px; }
+    h1 { font-size: 18px; }
+    .pill { display:inline-block; padding:2px 8px; border:1px solid #999; border-radius:999px; }
+    table { width:100%; border-collapse: collapse; }
+    th, td { border:1px solid #ddd; padding:6px; vertical-align: top; }
+    th { background:#f2f2f2; }
+    .mono { font-family: Consolas, monospace; font-size: 11px; }
+  </style>
+</head>
+<body>
+  <h1>Execution Report — Run #{{ run.id }} <span class="pill">{{ run.status.value }}</span></h1>
+  <p><strong>Bundle:</strong> {{ bundle.id }} • <span class="mono">{{ bundle.version_hash }}</span></p>
+  <p><strong>Started:</strong> {{ run.started_at }} • <strong>Finished:</strong> {{ run.finished_at or "" }}</p>
+  <p><strong>Results:</strong> {{ passes }} PASS / {{ fails }} FAIL ({{ total }} steps)</p>
+
+  <h2>Step Results</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Test</th><th>Step</th><th>Status</th><th>Message</th><th>URL</th><th>Evidence</th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for r in results %}
+      <tr>
+        <td>{{ r.test_case_id }}</td>
+        <td>{{ r.step_id }}</td>
+        <td>{{ r.status.value }}</td>
+        <td>{{ r.message or "" }}</td>
+        <td class="mono">{{ r.page_url or "" }}</td>
+        <td class="mono">
+          {% for e in ev_by_result.get(r.id, []) %}
+            {{ e.path }} ({{ e.sha256[:10] }}…)<br/>
+          {% endfor %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</body>
+</html>

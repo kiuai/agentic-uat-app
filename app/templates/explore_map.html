@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block content %}
+  <h1>Explore Map — {{ app.name }}</h1>
+  <p class="muted">Base URL: <span class="mono">{{ app.base_url }}</span></p>
+
+  <div class="card">
+    <h2>Discovered pages</h2>
+    <table class="table">
+      <thead><tr><th>URL</th><th>Title</th><th>DOM Hash</th><th>Last Seen</th></tr></thead>
+      <tbody>
+      {% for p in pages %}
+        <tr>
+          <td class="mono"><a class="link mono" href="/ui/pages/{{ p.id }}">{{ p.url }}</a></td>
+          <td>{{ p.title or "" }}</td>
+          <td class="mono">{{ (p.dom_hash or "")[:12] }}…</td>
+          <td class="muted small">{{ p.discovered_at }}</td>
+        </tr>
+      {% else %}
+        <tr><td colspan="4" class="muted">No pages recorded yet. Run Explore first.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+{% endblock %}

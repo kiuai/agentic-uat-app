@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block content %}
+  <h1>Applications</h1>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Create application</h2>
+      <form method="post" action="/ui/applications" class="form">
+        <label>Project</label>
+        <select name="project_id" required>
+          {% for p in projects %}
+            <option value="{{ p.id }}">{{ p.name }} (#{{ p.id }})</option>
+          {% endfor %}
+        </select>
+        <label>Name</label>
+        <input name="name" required />
+        <label>Base URL</label>
+        <input name="base_url" placeholder="https://..." required />
+        <label>Environment</label>
+        <input name="environment" value="non-prod"/>
+        <button type="submit">Create</button>
+      </form>
+      <p class="muted small">Only Validation Lead/Admin can create applications (RBAC enforced).</p>
+    </div>
+
+    <div class="card">
+      <h2>Existing applications</h2>
+      <table class="table">
+        <thead><tr><th>ID</th><th>Name</th><th>Base URL</th><th>Explore</th><th>Map</th></tr></thead>
+        <tbody>
+        {% for a in apps %}
+          <tr>
+            <td>{{ a.id }}</td>
+            <td><strong>{{ a.name }}</strong></td>
+            <td class="mono">{{ a.base_url }}</td>
+            <td>
+              <form method="post" action="/ui/applications/{{ a.id }}/explore" onsubmit="return confirm('Submit explore job?');">
+                <button type="submit" formmethod="post" formaction="/ui/applications/{{ a.id }}/explore">Start (API)</button>
+              </form>
+              <p class="muted small">This triggers a background explore job.</p>
+            </td>
+            <td><a class="link" href="/ui/applications/{{ a.id }}/explore-map">Explore map →</a></td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+{% endblock %}

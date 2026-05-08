@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block content %}
+  <h1>Test Bundles</h1>
+  {% if error == "self_approve" %}
+    <div class="alert">You cannot approve your own work. Ask another approver.</div>
+  {% endif %}
+
+  <div class="grid">
+    <div class="card">
+      <h2>Generate bundle</h2>
+      <form method="post" action="/ui/bundles/generate" class="form">
+        <label>Project</label>
+        <select name="project_id" required>
+          {% for p in projects %}
+            <option value="{{ p.id }}">{{ p.name }} (#{{ p.id }})</option>
+          {% endfor %}
+        </select>
+        <label>Application</label>
+        <select name="application_id" required>
+          {% for a in apps %}
+            <option value="{{ a.id }}">{{ a.name }} (#{{ a.id }})</option>
+          {% endfor %}
+        </select>
+        <button type="submit">Generate (background job)</button>
+      </form>
+      <p class="muted small">Generation uses discovered selectors from Explorer (pages/elements). Run <strong>Explore</strong> first for best results. Swap LLM provider in <code>app/llm/provider.py</code>.</p>
+    </div>
+
+    <div class="card">
+      <h2>Existing bundles</h2>
+      <table class="table">
+        <thead><tr><th>ID</th><th>Project</th><th>Status</th><th>Version</th><th>LLM</th><th>Actions</th><th>Review</th></tr></thead>
+        <tbody>
+        {% for b in bundles %}
+          <tr>
+            <td>{{ b.id }}</td>
+            <td>{{ b.project_id }}</td>
+            <td><span class="pill">{{ b.status.value }}</span></td>
+            <td class="mono">{{ b.version_hash[:12] }}…</td>
+            <td class="muted small">{{ (b.llm_provider or "n/a") }}{% if b.llm_model %} • {{ b.llm_model }}{% endif %}</td>
+            <td>
+              <a class="link" href="/ui/bundles/{{ b.id }}/develop">Develop Test Script →</a>
+              <form method="post" action="/ui/bundles/{{ b.id }}/approve" style="display:inline">
+                <input type="hidden" name="reason" value="UI approval"/>
+                <button type="submit">Approve</button>
+              </form>
+              <form method="post" action="/ui/bundles/{{ b.id }}/run" style="display:inline">
+                <button type="submit">Run</button>
+              </form>
+            </td>
+            <td><a class="link" href="/ui/bundles/{{ b.id }}">Open →</a></td>
+          </tr>
+        {% else %}
+          <tr><td colspan="6" class="muted">No bundles yet.</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      <p class="muted small">Approve requires Validation Lead / QA / Admin.</p>
+    </div>
+  </div>
+{% endblock %}

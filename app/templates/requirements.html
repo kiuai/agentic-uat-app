@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block content %}
+  <h1>Requirements — {{ project.name }}</h1>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Add requirement</h2>
+      <form method="post" action="/ui/requirements/{{ project.id }}" class="form">
+        <label>Req ID</label>
+        <input name="req_id" required placeholder="REQ-001"/>
+        <label>Text</label>
+        <textarea name="text" rows="5" required></textarea>
+        <div class="row">
+          <div>
+            <label>Priority</label>
+            <select name="priority">
+              <option value="">Select...</option>
+              <option value="High">High</option>
+              <option value="Medium">Medium</option>
+              <option value="Low">Low</option>
+            </select>
+          </div>
+          <div>
+            <label>Risk</label>
+            <select name="risk">
+              <option value="">Select...</option>
+              <option value="High">High</option>
+              <option value="Medium">Medium</option>
+              <option value="Low">Low</option>
+            </select>
+          </div>
+        </div>
+        <label>Source</label>
+        <input name="source" placeholder="BRD v1.2 / Jira / SOP..." />
+        <button type="submit">Add</button>
+      </form>
+    </div>
+
+    <div class="card">
+      <h2>Existing requirements</h2>
+      <table class="table">
+        <thead><tr><th>ID</th><th>Req ID</th><th>Priority</th><th>Risk</th><th>Text</th></tr></thead>
+        <tbody>
+        {% for r in reqs %}
+          <tr>
+            <td>{{ r.id }}</td>
+            <td class="mono">{{ r.req_id }}</td>
+            <td>{{ r.priority or "" }}</td>
+            <td>{{ r.risk or "" }}</td>
+            <td>{{ r.text }}</td>
+          </tr>
+        {% else %}
+          <tr><td colspan="5" class="muted">No requirements yet.</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+{% endblock %}
