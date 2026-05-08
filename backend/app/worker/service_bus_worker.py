@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import signal
 import uuid
 from datetime import datetime, timezone
 from typing import Any
@@ -36,17 +37,31 @@ class JobWorker:
     def __init__(self) -> None:
         self._settings = get_settings()
         self._running = True
+        self._shutdown_event = asyncio.Event()
+
+    def _register_signal_handlers(self) -> None:
+        """Register SIGTERM and SIGINT handlers for graceful shutdown."""
+        loop = asyncio.get_event_loop()
+
+        def _handle_signal(sig: int) -> None:
+            logger.info("worker_shutdown_signal_received", signal=sig)
+            self._running = False
+            self._shutdown_event.set()
+
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            loop.add_signal_handler(sig, _handle_signal, sig)
 
     async def run(self) -> None:
         logger.info("worker_starting")
         configure_logging(self._settings.log_level)
+        self._register_signal_handlers()
 
         async with async_playwright() as pw:
             self._playwright = pw
             async with ServiceBusClient.from_connection_string(
                 self._settings.azure_service_bus_connection_string
             ) as client:
-                await asyncio.gather(
+                tasks = await asyncio.gather(
                     self._consume_topic(
                         client,
                         self._settings.azure_service_bus_ai_jobs_topic,
@@ -57,7 +72,9 @@ class JobWorker:
                         self._settings.azure_service_bus_crawl_jobs_topic,
                         self._handle_crawl_job,
                     ),
+                    return_exceptions=True,
                 )
+                logger.info("worker_stopped")
 
     async def _consume_topic(
         self,
@@ -73,6 +90,10 @@ class JobWorker:
         ) as receiver:
             logger.info("worker_listening", topic=topic)
             async for message in receiver:
+                if not self._running:
+                    # Abandon current message so it can be reprocessed after restart
+                    await receiver.abandon_message(message)
+                    break
                 try:
                     body = json.loads(str(message))
                     await handler(body)

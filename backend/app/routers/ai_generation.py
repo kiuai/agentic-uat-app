@@ -20,7 +20,7 @@ router = APIRouter(prefix="/projects/{project_id}/generation-jobs")
     "",
     response_model=JobRead,
     status_code=status.HTTP_202_ACCEPTED,
-    dependencies=[Depends(RequirePermission(Permission.AI_GENERATION_TRIGGER))],
+    dependencies=[Depends(RequirePermission(Permission.AI_GENERATE))],
 )
 async def trigger_generation(
     project_id: uuid.UUID,
@@ -37,7 +37,7 @@ async def trigger_generation(
 @router.get(
     "",
     response_model=list[JobRead],
-    dependencies=[Depends(RequirePermission(Permission.AI_GENERATION_READ))],
+    dependencies=[Depends(RequirePermission(Permission.AI_GENERATE))],
 )
 async def list_generation_jobs(
     project_id: uuid.UUID, db: TenantDB, current_user: CurrentUser
@@ -49,7 +49,7 @@ async def list_generation_jobs(
 @router.get(
     "/{job_id}",
     response_model=JobRead,
-    dependencies=[Depends(RequirePermission(Permission.AI_GENERATION_READ))],
+    dependencies=[Depends(RequirePermission(Permission.AI_GENERATE))],
 )
 async def get_generation_job(
     project_id: uuid.UUID, job_id: uuid.UUID, db: TenantDB
@@ -61,7 +61,7 @@ async def get_generation_job(
 @router.delete(
     "/{job_id}",
     status_code=status.HTTP_204_NO_CONTENT,
-    dependencies=[Depends(RequirePermission(Permission.AI_GENERATION_TRIGGER))],
+    dependencies=[Depends(RequirePermission(Permission.AI_GENERATE))],
 )
 async def cancel_generation_job(
     project_id: uuid.UUID, job_id: uuid.UUID, db: TenantDB

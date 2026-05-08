@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import uuid
+from typing import Any
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, Query, UploadFile, status
 
 from app.auth.permissions import Permission
 from app.dependencies import CurrentUser, RequirePermission, TenantDB
+from app.models.requirement import RequirementStatus
 from app.schemas.requirement import RequirementCreate, RequirementRead, RequirementUpdate
 from app.services.requirement_service import RequirementService
 
@@ -20,10 +22,25 @@ router = APIRouter(prefix="/projects/{project_id}/requirements")
     dependencies=[Depends(RequirePermission(Permission.REQUIREMENT_READ))],
 )
 async def list_requirements(
-    project_id: uuid.UUID, db: TenantDB, current_user: CurrentUser
+    project_id: uuid.UUID,
+    db: TenantDB,
+    current_user: CurrentUser,
+    status: RequirementStatus | None = Query(None),
+    business_domain: str | None = Query(None),
+    search: str | None = Query(None, max_length=255),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
 ) -> list[RequirementRead]:
     service = RequirementService(db)
-    return await service.list_requirements(project_id, current_user.tenant_id)
+    return await service.list_requirements(
+        project_id,
+        current_user.tenant_id,
+        status=status,
+        business_domain=business_domain,
+        search=search,
+        limit=limit,
+        offset=offset,
+    )
 
 
 @router.post(
@@ -39,7 +56,9 @@ async def create_requirement(
     current_user: CurrentUser,
 ) -> RequirementRead:
     service = RequirementService(db)
-    return await service.create_requirement(project_id, current_user.tenant_id, current_user.id, body)
+    return await service.create_requirement(
+        project_id, current_user.tenant_id, current_user.id, body
+    )
 
 
 @router.post(
@@ -52,13 +71,13 @@ async def upload_requirement(
     project_id: uuid.UUID,
     file: UploadFile = File(...),
     title: str = Form(...),
-    domain_code: str | None = Form(None),
+    business_domain: str | None = Form(None),
     db: TenantDB = Depends(),
     current_user: CurrentUser = Depends(),
 ) -> RequirementRead:
     service = RequirementService(db)
     return await service.upload_requirement(
-        project_id, current_user.tenant_id, current_user.id, file, title, domain_code
+        project_id, current_user.tenant_id, current_user.id, file, title, business_domain
     )
 
 
@@ -96,3 +115,41 @@ async def delete_requirement(
 ) -> None:
     service = RequirementService(db)
     await service.delete_requirement(req_id)
+
+
+@router.get(
+    "/{req_id}/quality-check",
+    dependencies=[Depends(RequirePermission(Permission.REQUIREMENT_READ))],
+    summary="Run a heuristic quality check and return a testability score",
+)
+async def quality_check(
+    project_id: uuid.UUID, req_id: uuid.UUID, db: TenantDB
+) -> dict[str, Any]:
+    service = RequirementService(db)
+    return await service.quality_check(req_id)
+
+
+@router.post(
+    "/{req_id}/generate-scripts",
+    status_code=status.HTTP_202_ACCEPTED,
+    dependencies=[Depends(RequirePermission(Permission.AI_GENERATE))],
+    summary="Dispatch an AI generation job for this requirement",
+)
+async def generate_scripts(
+    project_id: uuid.UUID,
+    req_id: uuid.UUID,
+    db: TenantDB,
+    current_user: CurrentUser,
+    output_formats: list[str] = Query(
+        default=["playwright_ts"],
+        description="Script formats to generate",
+    ),
+) -> dict[str, Any]:
+    service = RequirementService(db)
+    return await service.trigger_generate_scripts(
+        project_id,
+        current_user.tenant_id,
+        current_user.id,
+        req_id,
+        output_formats,
+    )

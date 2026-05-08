@@ -6,13 +6,17 @@ import uuid
 
 from fastapi import APIRouter, Depends, status
 
-from app.dependencies import CurrentUser, TenantDB, RequirePermission
 from app.auth.permissions import Permission
+from app.dependencies import CurrentUser, RequirePermission, TenantDB
 from app.schemas.project import (
-    EnvironmentCreate, EnvironmentRead, EnvironmentUpdate,
-    ProjectCreate, ProjectRead, ProjectUpdate,
+    EnvironmentCreate,
+    EnvironmentRead,
+    EnvironmentUpdate,
+    ProjectCreate,
+    ProjectRead,
+    ProjectUpdate,
 )
-from app.services.project_service import ProjectService
+from app.services.project_service import ProjectDashboard, ProjectService
 
 router = APIRouter(prefix="/projects")
 
@@ -70,6 +74,19 @@ async def update_project(
 async def delete_project(project_id: uuid.UUID, db: TenantDB) -> None:
     service = ProjectService(db)
     await service.archive_project(project_id)
+
+
+@router.get(
+    "/{project_id}/dashboard",
+    response_model=ProjectDashboard,
+    dependencies=[Depends(RequirePermission(Permission.PROJECT_READ))],
+    summary="Live dashboard with requirement, script, cycle and execution counts",
+)
+async def get_project_dashboard(
+    project_id: uuid.UUID, db: TenantDB, current_user: CurrentUser
+) -> ProjectDashboard:
+    service = ProjectService(db)
+    return await service.get_dashboard(project_id, current_user.tenant_id)
 
 
 # ── Environments ──────────────────────────────────────────────────────────────

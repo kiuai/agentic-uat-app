@@ -15,9 +15,13 @@ from app.schemas.test_cycle import (
     ExecutionCreate,
     ExecutionRead,
     ExecutionUpdate,
+    TestAssignmentCreate,
+    TestAssignmentResponse,
     TestCycleCreate,
     TestCycleRead,
     TestCycleUpdate,
+    TestResultCreate,
+    TestResultResponse,
 )
 from app.schemas.test_script import BulkExportResponse
 from app.services.export_service import ExportService
@@ -97,25 +101,25 @@ async def close_cycle(
     return await service.close_cycle(cycle_id)
 
 
-# ── Executions ────────────────────────────────────────────────────────────────
+# ── Assignments ───────────────────────────────────────────────────────────────
 
 @router.get(
     "/{cycle_id}/executions",
-    response_model=list[ExecutionRead],
+    response_model=list[TestAssignmentResponse],
     dependencies=[Depends(RequirePermission(Permission.CYCLE_READ))],
 )
 async def list_executions(
     project_id: uuid.UUID, cycle_id: uuid.UUID, db: TenantDB
-) -> list[ExecutionRead]:
+) -> list[TestAssignmentResponse]:
     service = TestCycleService(db)
     return await service.list_executions(cycle_id)
 
 
 @router.post(
     "/{cycle_id}/executions",
-    response_model=ExecutionRead,
+    response_model=TestAssignmentResponse,
     status_code=status.HTTP_201_CREATED,
-    dependencies=[Depends(RequirePermission(Permission.CYCLE_UPDATE))],
+    dependencies=[Depends(RequirePermission(Permission.ASSIGNMENT_CREATE))],
 )
 async def add_execution(
     project_id: uuid.UUID,
@@ -123,15 +127,37 @@ async def add_execution(
     body: ExecutionCreate,
     db: TenantDB,
     current_user: CurrentUser,
-) -> ExecutionRead:
+) -> TestAssignmentResponse:
     service = TestCycleService(db)
-    return await service.add_execution(cycle_id, current_user.tenant_id, body)
+    return await service.add_execution(
+        cycle_id, current_user.tenant_id, current_user.id, body
+    )
+
+
+@router.post(
+    "/{cycle_id}/executions/bulk",
+    response_model=list[TestAssignmentResponse],
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(RequirePermission(Permission.ASSIGNMENT_CREATE))],
+    summary="Bulk assign multiple scripts to testers in one request",
+)
+async def bulk_assign(
+    project_id: uuid.UUID,
+    cycle_id: uuid.UUID,
+    body: list[TestAssignmentCreate],
+    db: TenantDB,
+    current_user: CurrentUser,
+) -> list[TestAssignmentResponse]:
+    service = TestCycleService(db)
+    return await service.bulk_assign(
+        cycle_id, current_user.tenant_id, current_user.id, body
+    )
 
 
 @router.patch(
     "/{cycle_id}/executions/{exec_id}",
-    response_model=ExecutionRead,
-    dependencies=[Depends(RequirePermission(Permission.EXECUTION_LOG))],
+    response_model=TestAssignmentResponse,
+    dependencies=[Depends(RequirePermission(Permission.ASSIGNMENT_UPDATE))],
 )
 async def log_execution_result(
     project_id: uuid.UUID,
@@ -140,16 +166,47 @@ async def log_execution_result(
     body: ExecutionUpdate,
     db: TenantDB,
     current_user: CurrentUser,
-) -> ExecutionRead:
+) -> TestAssignmentResponse:
     service = TestCycleService(db)
-    return await service.log_result(exec_id, current_user, body)
+    return await service.log_result(
+        exec_id,
+        current_user.roles_in_tenant(),
+        current_user.id,
+        current_user.tenant_id,
+        body,
+    )
+
+
+@router.post(
+    "/{cycle_id}/executions/{exec_id}/results",
+    response_model=TestResultResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(RequirePermission(Permission.RESULT_CREATE))],
+    summary="Submit a test execution result for an assignment",
+)
+async def submit_result(
+    project_id: uuid.UUID,
+    cycle_id: uuid.UUID,
+    exec_id: uuid.UUID,
+    body: TestResultCreate,
+    db: TenantDB,
+    current_user: CurrentUser,
+) -> TestResultResponse:
+    service = TestCycleService(db)
+    return await service.submit_result(
+        exec_id,
+        current_user.roles_in_tenant(),
+        current_user.id,
+        current_user.tenant_id,
+        body,
+    )
 
 
 @router.post(
     "/{cycle_id}/executions/{exec_id}/evidence",
     response_model=EvidenceRead,
     status_code=status.HTTP_201_CREATED,
-    dependencies=[Depends(RequirePermission(Permission.EXECUTION_EVIDENCE_UPLOAD))],
+    dependencies=[Depends(RequirePermission(Permission.RESULT_CREATE))],
 )
 async def upload_evidence(
     project_id: uuid.UUID,
@@ -160,7 +217,13 @@ async def upload_evidence(
     current_user: CurrentUser = Depends(),
 ) -> EvidenceRead:
     service = TestCycleService(db)
-    return await service.upload_evidence(exec_id, current_user, file)
+    return await service.upload_evidence(
+        exec_id,
+        current_user.roles_in_tenant(),
+        current_user.id,
+        current_user.tenant_id,
+        file,
+    )
 
 
 # ── Cycle-level export (no project_id needed in path) ─────────────────────────

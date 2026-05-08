@@ -389,6 +389,9 @@ def can_access_tenant(user: CurrentUser, company_id: UUID) -> bool:
 
 # Old code imported: from app.dependencies import CurrentUser (as annotation type)
 # New CurrentUser is the dataclass from azure_ad. Re-export it here.
+# Capitalised alias used by most routers: Depends(RequirePermission(Permission.X))
+RequirePermission = require_permission
+
 __all__ = [
     "CurrentUserDep",
     "TenantDB",
@@ -402,5 +405,6 @@ __all__ = [
     "require_roles",
     "check_domain_scope",
     "can_access_tenant",
+    "RequirePermission",
     "CurrentUser",
 ]

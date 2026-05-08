@@ -37,6 +37,8 @@ class Permission(str, Enum):
     PROJECT_CREATE = "project:create"
     PROJECT_UPDATE = "project:update"
     PROJECT_DELETE = "project:delete"
+    ENVIRONMENT_READ = "environment:read"
+    ENVIRONMENT_MANAGE = "environment:manage"
 
     # ── Requirements ───────────────────────────────────────────────────────
     REQUIREMENT_READ = "requirement:read"
@@ -89,6 +91,7 @@ _ALL = set(Permission)
 # Permissions available to every authenticated user regardless of role
 _BASE: set[Permission] = {
     Permission.PROJECT_READ,
+    Permission.ENVIRONMENT_READ,
     Permission.REQUIREMENT_READ,
     Permission.SCRIPT_READ,
     Permission.CYCLE_READ,
@@ -114,6 +117,7 @@ ROLE_PERMISSIONS: dict[RoleCode, set[Permission]] = {
         # Projects
         Permission.PROJECT_READ, Permission.PROJECT_CREATE,
         Permission.PROJECT_UPDATE, Permission.PROJECT_DELETE,
+        Permission.ENVIRONMENT_READ, Permission.ENVIRONMENT_MANAGE,
         # Requirements
         Permission.REQUIREMENT_READ, Permission.REQUIREMENT_CREATE,
         Permission.REQUIREMENT_UPDATE, Permission.REQUIREMENT_DELETE,
@@ -139,7 +143,7 @@ ROLE_PERMISSIONS: dict[RoleCode, set[Permission]] = {
 
     RoleCode.VALIDATION_LEAD: {
         # Projects & Cycles
-        Permission.PROJECT_READ,
+        Permission.PROJECT_READ, Permission.ENVIRONMENT_READ,
         Permission.CYCLE_READ, Permission.CYCLE_CREATE,
         Permission.CYCLE_UPDATE, Permission.CYCLE_DELETE,
         Permission.ASSIGNMENT_CREATE, Permission.ASSIGNMENT_UPDATE,
@@ -162,7 +166,7 @@ ROLE_PERMISSIONS: dict[RoleCode, set[Permission]] = {
     },
 
     RoleCode.QA: {
-        Permission.PROJECT_READ,
+        Permission.PROJECT_READ, Permission.ENVIRONMENT_READ,
         Permission.REQUIREMENT_READ,
         Permission.SCRIPT_READ, Permission.SCRIPT_EXPORT,
         Permission.CYCLE_READ,
@@ -173,7 +177,7 @@ ROLE_PERMISSIONS: dict[RoleCode, set[Permission]] = {
     },
 
     RoleCode.VALIDATION_TESTER: {
-        Permission.PROJECT_READ,
+        Permission.PROJECT_READ, Permission.ENVIRONMENT_READ,
         Permission.REQUIREMENT_READ,
         # Own draft scripts only — enforced at service layer
         Permission.SCRIPT_READ, Permission.SCRIPT_CREATE, Permission.SCRIPT_UPDATE,
@@ -187,6 +191,7 @@ ROLE_PERMISSIONS: dict[RoleCode, set[Permission]] = {
 
     RoleCode.BUSINESS_PROCESS_OWNER: {
         # Domain-scoped — service layer enforces domain_code filtering
+        Permission.PROJECT_READ, Permission.ENVIRONMENT_READ,
         Permission.REQUIREMENT_READ,
         Permission.SCRIPT_READ,
         Permission.SCRIPT_APPROVE,  # Domain-scoped only

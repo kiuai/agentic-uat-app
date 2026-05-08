@@ -5,16 +5,55 @@ from __future__ import annotations
 import uuid
 
 from fastapi import HTTPException, status
+from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.project import Environment, Project, ProjectStatus
-from app.models.test_cycle import CycleStatus, Execution, ExecutionStatus, TestCycle
+from app.models.test_cycle import CycleStatus, ExecutionStatus, TestAssignment, TestCycle, TestResult
+from app.models.test_script import ScriptStatus, TestScript
 from app.schemas.project import (
-    EnvironmentCreate, EnvironmentRead, EnvironmentUpdate,
-    ProjectCreate, ProjectRead, ProjectUpdate,
+    EnvironmentCreate,
+    EnvironmentRead,
+    EnvironmentUpdate,
+    ProjectCreate,
+    ProjectRead,
+    ProjectUpdate,
 )
-from app.routers.reports import ProjectSummaryReport
+
+
+# ---------------------------------------------------------------------------
+# Report schema (defined here to avoid circular import with reports router)
+# ---------------------------------------------------------------------------
+
+
+class ProjectSummaryReport(BaseModel):
+    project_id: uuid.UUID
+    total_scripts: int
+    approved_scripts: int
+    total_requirements: int
+    total_cycles: int
+    active_cycles: int
+    total_assignments: int
+    passed: int
+    failed: int
+    blocked: int
+    not_started: int
+    pass_rate: float
+
+
+class ProjectDashboard(BaseModel):
+    project_id: uuid.UUID
+    name: str
+    total_requirements: int
+    pending_requirements: int
+    total_scripts: int
+    draft_scripts: int
+    approved_scripts: int
+    total_cycles: int
+    active_cycles: int
+    total_assignments: int
+    pass_rate: float
 
 
 class ProjectService:
@@ -38,6 +77,9 @@ class ProjectService:
             tenant_id=tenant_id,
             name=body.name,
             description=body.description,
+            system_type=body.system_type,
+            base_url=body.base_url,
+            settings=body.settings,
             created_by=created_by,
         )
         self._db.add(project)
@@ -55,12 +97,8 @@ class ProjectService:
         project = await self._db.get(Project, project_id)
         if not project:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
-        if body.name is not None:
-            project.name = body.name
-        if body.description is not None:
-            project.description = body.description
-        if body.status is not None:
-            project.status = body.status
+        for field, value in body.model_dump(exclude_none=True).items():
+            setattr(project, field, value)
         await self._db.flush()
         await self._db.refresh(project)
         return ProjectRead.model_validate(project)
@@ -120,15 +158,120 @@ class ProjectService:
         await self._db.delete(env)
         await self._db.flush()
 
+    async def get_dashboard(
+        self, project_id: uuid.UUID, tenant_id: uuid.UUID
+    ) -> ProjectDashboard:
+        from app.models.requirement import Requirement, RequirementStatus
+
+        project = await self._db.get(Project, project_id)
+        if not project:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
+
+        total_reqs = await self._db.scalar(
+            select(func.count(Requirement.id)).where(
+                Requirement.project_id == project_id, Requirement.tenant_id == tenant_id
+            )
+        ) or 0
+        pending_reqs = await self._db.scalar(
+            select(func.count(Requirement.id)).where(
+                Requirement.project_id == project_id,
+                Requirement.tenant_id == tenant_id,
+                Requirement.status == RequirementStatus.PENDING,
+            )
+        ) or 0
+        total_scripts = await self._db.scalar(
+            select(func.count(TestScript.id)).where(
+                TestScript.project_id == project_id, TestScript.tenant_id == tenant_id
+            )
+        ) or 0
+        draft_scripts = await self._db.scalar(
+            select(func.count(TestScript.id)).where(
+                TestScript.project_id == project_id,
+                TestScript.tenant_id == tenant_id,
+                TestScript.status == ScriptStatus.DRAFT,
+            )
+        ) or 0
+        approved_scripts = await self._db.scalar(
+            select(func.count(TestScript.id)).where(
+                TestScript.project_id == project_id,
+                TestScript.tenant_id == tenant_id,
+                TestScript.status == ScriptStatus.APPROVED,
+            )
+        ) or 0
+        total_cycles = await self._db.scalar(
+            select(func.count(TestCycle.id)).where(
+                TestCycle.project_id == project_id, TestCycle.tenant_id == tenant_id
+            )
+        ) or 0
+        active_cycles = await self._db.scalar(
+            select(func.count(TestCycle.id)).where(
+                TestCycle.project_id == project_id,
+                TestCycle.tenant_id == tenant_id,
+                TestCycle.status == CycleStatus.ACTIVE,
+            )
+        ) or 0
+
+        # Assignment stats via cycle IDs
+        cycle_ids_result = await self._db.execute(
+            select(TestCycle.id).where(
+                TestCycle.project_id == project_id, TestCycle.tenant_id == tenant_id
+            )
+        )
+        cycle_ids = [r[0] for r in cycle_ids_result]
+
+        total_assignments = 0
+        passed = 0
+        if cycle_ids:
+            total_assignments = await self._db.scalar(
+                select(func.count(TestAssignment.id)).where(
+                    TestAssignment.cycle_id.in_(cycle_ids)
+                )
+            ) or 0
+            passed = await self._db.scalar(
+                select(func.count(TestAssignment.id)).where(
+                    TestAssignment.cycle_id.in_(cycle_ids),
+                    TestAssignment.status == ExecutionStatus.PASSED,
+                )
+            ) or 0
+
+        pass_rate = round(passed / total_assignments * 100, 1) if total_assignments else 0.0
+
+        return ProjectDashboard(
+            project_id=project_id,
+            name=project.name,
+            total_requirements=total_reqs,
+            pending_requirements=pending_reqs,
+            total_scripts=total_scripts,
+            draft_scripts=draft_scripts,
+            approved_scripts=approved_scripts,
+            total_cycles=total_cycles,
+            active_cycles=active_cycles,
+            total_assignments=total_assignments,
+            pass_rate=pass_rate,
+        )
+
     async def get_summary_report(
         self, project_id: uuid.UUID, tenant_id: uuid.UUID
     ) -> ProjectSummaryReport:
-        cycles_result = await self._db.execute(
-            select(func.count(TestCycle.id), func.count()).where(
-                TestCycle.project_id == project_id,
-                TestCycle.tenant_id == tenant_id,
+        from app.models.requirement import Requirement
+
+        total_reqs = await self._db.scalar(
+            select(func.count(Requirement.id)).where(
+                Requirement.project_id == project_id, Requirement.tenant_id == tenant_id
             )
-        )
+        ) or 0
+        total_scripts = await self._db.scalar(
+            select(func.count(TestScript.id)).where(
+                TestScript.project_id == project_id, TestScript.tenant_id == tenant_id
+            )
+        ) or 0
+        approved_scripts = await self._db.scalar(
+            select(func.count(TestScript.id)).where(
+                TestScript.project_id == project_id,
+                TestScript.tenant_id == tenant_id,
+                TestScript.status == ScriptStatus.APPROVED,
+            )
+        ) or 0
         total_cycles = await self._db.scalar(
             select(func.count(TestCycle.id)).where(
                 TestCycle.project_id == project_id, TestCycle.tenant_id == tenant_id
@@ -149,30 +292,47 @@ class ProjectService:
         )
         cycle_ids = [r[0] for r in cycle_ids_result]
 
-        exec_counts: dict[str, int] = {}
-        for exec_status in ExecutionStatus:
-            count = await self._db.scalar(
-                select(func.count(Execution.id)).where(
-                    Execution.cycle_id.in_(cycle_ids),
-                    Execution.status == exec_status,
+        total_assignments = passed = failed = blocked = not_started = 0
+        if cycle_ids:
+            passed = await self._db.scalar(
+                select(func.count(TestAssignment.id)).where(
+                    TestAssignment.cycle_id.in_(cycle_ids),
+                    TestAssignment.status == ExecutionStatus.PASSED,
                 )
             ) or 0
-            exec_counts[exec_status.value] = count
+            failed = await self._db.scalar(
+                select(func.count(TestAssignment.id)).where(
+                    TestAssignment.cycle_id.in_(cycle_ids),
+                    TestAssignment.status == ExecutionStatus.FAILED,
+                )
+            ) or 0
+            blocked = await self._db.scalar(
+                select(func.count(TestAssignment.id)).where(
+                    TestAssignment.cycle_id.in_(cycle_ids),
+                    TestAssignment.status == ExecutionStatus.BLOCKED,
+                )
+            ) or 0
+            not_started = await self._db.scalar(
+                select(func.count(TestAssignment.id)).where(
+                    TestAssignment.cycle_id.in_(cycle_ids),
+                    TestAssignment.status == ExecutionStatus.NOT_STARTED,
+                )
+            ) or 0
+            total_assignments = passed + failed + blocked + not_started
 
-        total_exec = sum(exec_counts.values())
-        passed = exec_counts.get("PASSED", 0)
-        pass_rate = round(passed / total_exec * 100, 1) if total_exec else 0.0
+        pass_rate = round(passed / total_assignments * 100, 1) if total_assignments else 0.0
 
         return ProjectSummaryReport(
             project_id=project_id,
-            total_scripts=0,
-            approved_scripts=0,
+            total_scripts=total_scripts,
+            approved_scripts=approved_scripts,
+            total_requirements=total_reqs,
             total_cycles=total_cycles,
             active_cycles=active_cycles,
-            total_executions=total_exec,
+            total_assignments=total_assignments,
             passed=passed,
-            failed=exec_counts.get("FAILED", 0),
-            blocked=exec_counts.get("BLOCKED", 0),
-            not_started=exec_counts.get("NOT_STARTED", 0),
+            failed=failed,
+            blocked=blocked,
+            not_started=not_started,
             pass_rate=pass_rate,
         )
