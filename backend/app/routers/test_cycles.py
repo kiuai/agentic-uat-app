@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends, File, UploadFile, status
+from fastapi import APIRouter, Depends, File, Query, UploadFile, status
 
 from app.auth.permissions import Permission
-from app.dependencies import CurrentUser, RequirePermission, TenantDB
+from app.dependencies import CurrentUser, CosmosDep, RequirePermission, TenantDB
+from app.exporters.base import ExportFormat
+from app.models.test_script import ScriptFormat
 from app.schemas.test_cycle import (
     EvidenceRead,
     ExecutionCreate,
@@ -17,6 +19,8 @@ from app.schemas.test_cycle import (
     TestCycleRead,
     TestCycleUpdate,
 )
+from app.schemas.test_script import BulkExportResponse
+from app.services.export_service import ExportService
 from app.services.test_cycle_service import TestCycleService
 
 router = APIRouter(prefix="/projects/{project_id}/cycles")
@@ -157,3 +161,45 @@ async def upload_evidence(
 ) -> EvidenceRead:
     service = TestCycleService(db)
     return await service.upload_evidence(exec_id, current_user, file)
+
+
+# ── Cycle-level export (no project_id needed in path) ─────────────────────────
+
+cycle_export_router = APIRouter(prefix="/test-cycles")
+
+
+@cycle_export_router.get(
+    "/{cycle_id}/export",
+    response_model=BulkExportResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    dependencies=[
+        Depends(RequirePermission(Permission.SCRIPT_EXPORT)),
+        Depends(RequirePermission(Permission.CYCLE_READ)),
+    ],
+    summary="Export all approved scripts in a test cycle as a ZIP archive",
+)
+async def export_cycle(
+    cycle_id: uuid.UUID,
+    db: TenantDB,
+    cosmos: CosmosDep,
+    current_user: CurrentUser,
+    format: ScriptFormat = Query(..., description="Target export format"),
+    project_name: str = Query("KAATS", description="Project name for generated file headers"),
+    system_url: str = Query("", description="Base URL of the system under test"),
+) -> BulkExportResponse:
+    svc = ExportService(db, cosmos)
+    result = await svc.export_test_cycle(
+        test_cycle_id=cycle_id,
+        export_format=ExportFormat(format.value),
+        tenant_id=current_user.tenant_id,
+        project_name=project_name,
+        system_url=system_url,
+    )
+    return BulkExportResponse(
+        format=format,
+        blob_uri=result.blob_uri,
+        download_url=result.download_url,
+        expires_at=result.expires_at,
+        file_count=result.file_count,
+        generated_at=result.generated_at,
+    )

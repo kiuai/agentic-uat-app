@@ -1,59 +1,230 @@
-"""Selenium Python exporter."""
+"""
+Selenium + pytest exporter.
+
+Generates a pytest-based Selenium test file. Each TestCase becomes a method
+on a shared test class. A ``driver`` fixture handles browser lifecycle.
+All waits use ``WebDriverWait`` with explicit expected conditions.
+"""
 
 from __future__ import annotations
 
+import ast
 from typing import Any
 
-from jinja2 import Template
+from jinja2 import Environment, StrictUndefined
 
-from app.exporters.base import BaseExporter
+from app.exporters.base import (
+    BaseExporter,
+    ExportContext,
+    ExportFormat,
+    StepType,
+    TestCase,
+    TestStep,
+    ValidationResult,
+    _slugify,
+)
 
-_TEMPLATE = """from selenium import webdriver
+_jinja_env = Environment(undefined=StrictUndefined, autoescape=False)
+
+# ---------------------------------------------------------------------------
+# Step → Selenium Python mapping
+# ---------------------------------------------------------------------------
+
+
+def _step_to_py(step: TestStep, include_comments: bool) -> list[str]:
+    lines: list[str] = []
+    if include_comments and step.action:
+        lines.append(f"        # Step {step.number}: {step.action}")
+
+    loc = step.locator.replace("'", "\\'")
+    val = step.input_value.replace("'", "\\'")
+    exp = step.expected_result.replace("'", "\\'")
+
+    if step.step_type == StepType.NAVIGATE:
+        url = step.locator or step.input_value
+        lines.append(f"        driver.get('{url}')")
+
+    elif step.step_type == StepType.CLICK:
+        lines.append(
+            f"        WebDriverWait(driver, 10).until(\n"
+            f"            EC.element_to_be_clickable((By.CSS_SELECTOR, '{loc}'))\n"
+            f"        ).click()"
+        )
+
+    elif step.step_type == StepType.INPUT:
+        lines.append(
+            f"        el = WebDriverWait(driver, 10).until(\n"
+            f"            EC.presence_of_element_located((By.CSS_SELECTOR, '{loc}'))\n"
+            f"        )"
+        )
+        lines.append("        el.clear()")
+        lines.append(f"        el.send_keys('{val}')")
+
+    elif step.step_type == StepType.ASSERT:
+        if exp:
+            lines.append(
+                f"        el = WebDriverWait(driver, 10).until(\n"
+                f"            EC.presence_of_element_located((By.CSS_SELECTOR, '{loc}'))\n"
+                f"        )"
+            )
+            lines.append(f"        assert '{exp}' in el.text, f\"Expected '{{'{exp}'}}' in {{el.text!r}}\"")
+        else:
+            lines.append(
+                f"        WebDriverWait(driver, 10).until(\n"
+                f"            EC.visibility_of_element_located((By.CSS_SELECTOR, '{loc}'))\n"
+                f"        )"
+            )
+
+    elif step.step_type == StepType.WAIT:
+        if loc:
+            lines.append(
+                f"        WebDriverWait(driver, 10).until(\n"
+                f"            EC.presence_of_element_located((By.CSS_SELECTOR, '{loc}'))\n"
+                f"        )"
+            )
+        else:
+            ms = step.input_value or "1000"
+            lines.append(f"        import time; time.sleep({int(ms) / 1000})")
+
+    elif step.step_type == StepType.SCREENSHOT:
+        label = _slugify(step.action or f"step_{step.number}")
+        lines.append(f"        driver.save_screenshot('screenshots/{label}.png')")
+
+    elif step.step_type == StepType.API_CALL:
+        lines.append(
+            f"        import requests\n"
+            f"        resp = requests.get('{loc}')\n"
+            f"        assert resp.ok, f\"API call failed: {{resp.status_code}}\""
+        )
+
+    else:
+        lines.append(f"        pass  # TODO: implement step {step.number} — {step.action}")
+
+    if include_comments and step.expected_result and step.step_type != StepType.ASSERT:
+        lines.append(f"        # Expected: {step.expected_result}")
+
+    return lines
+
+
+# ---------------------------------------------------------------------------
+# Template
+# ---------------------------------------------------------------------------
+
+_TEMPLATE = """\
+import pytest
+from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-import unittest
-
-
-class {{ title | replace(' ', '') }}Test(unittest.TestCase):
-    def setUp(self):
-        self.driver = webdriver.Chrome()
-        self.driver.implicitly_wait(10)
-        self.wait = WebDriverWait(self.driver, 10)
-
-    def tearDown(self):
-        self.driver.quit()
-
-    def test_{{ title | lower | replace(' ', '_') }}(self):
-        \"\"\"{{ title }}
-        Preconditions: {{ preconditions | join('; ') }}
-        \"\"\"
-{% for step in steps %}
-        # Step {{ step.step_number }}: {{ step.description }}
-{% if step.action == 'navigate' %}
-        self.driver.get('{{ step.target }}')
-{% elif step.action == 'fill' %}
-        element = self.wait.until(EC.element_to_be_clickable((By.XPATH, "//*[@aria-label='{{ step.target }}']")))
-        element.clear()
-        element.send_keys('{{ step.input_data or '' }}')
-{% elif step.action == 'click' %}
-        self.wait.until(EC.element_to_be_clickable((By.XPATH, "//button[contains(text(),'{{ step.target }}')]"))).click()
-{% endif %}
+{% if custom_imports %}
+{% for imp in custom_imports %}
+{{ imp }}
 {% endfor %}
+{% endif %}
+
+BASE_URL = '{{ base_url }}'
 
 
-if __name__ == '__main__':
-    unittest.main()
+@pytest.fixture(scope='function')
+def driver():
+    options = webdriver.ChromeOptions()
+    options.add_argument('--headless=new')
+    options.add_argument('--no-sandbox')
+    options.add_argument('--disable-dev-shm-usage')
+    options.add_argument('--window-size=1920,1080')
+    drv = webdriver.Chrome(options=options)
+    drv.implicitly_wait(0)  # rely on explicit waits only
+    yield drv
+    drv.quit()
+
+
+class Test{{ class_name }}:
+    \"\"\"{{ project_name }} — {{ suite_title }}
+
+    Generated by KAATS export engine.
+    \"\"\"
+{% for tc in test_cases %}
+
+    def test_{{ tc.slug }}(self, driver):
+        \"\"\"{{ tc.title }}
+
+{% if tc.preconditions %}
+        Preconditions:
+{% for pre in tc.preconditions %}
+        - {{ pre }}
+{% endfor %}
+{% endif %}
+        Expected: {{ tc.expected_outcome }}
+        \"\"\"
+        driver.get(BASE_URL)
+{% for line in tc.step_lines %}
+{{ line }}
+{% endfor %}
+{% endfor %}
 """
 
 
-class SeleniumExporter(BaseExporter):
-    def __init__(self) -> None:
-        self._template = Template(_TEMPLATE)
+# ---------------------------------------------------------------------------
+# Exporter class
+# ---------------------------------------------------------------------------
 
-    def export(self, test_case: dict[str, Any]) -> str:
+
+class SeleniumExporter(BaseExporter):
+    """Generates pytest + Selenium Python test files."""
+
+    def __init__(self, context: ExportContext | None = None) -> None:
+        if context is None:
+            context = ExportContext(
+                project_name="KAATS",
+                system_url="https://example.com",
+                export_format=ExportFormat.SELENIUM_PYTHON,
+            )
+        super().__init__(context)
+        self._template = _jinja_env.from_string(_TEMPLATE)
+
+    def get_file_extension(self) -> str:
+        return ".py"
+
+    def export(self, test_cases: list[TestCase] | Any) -> str:
+        cases = self._coerce_input(test_cases)
+
+        rendered_cases = []
+        for tc in cases:
+            step_lines: list[str] = []
+            for step in tc.steps:
+                step_lines.extend(_step_to_py(step, self.context.include_comments))
+            rendered_cases.append(
+                {
+                    "title": tc.title,
+                    "slug": _slugify(tc.title),
+                    "preconditions": tc.preconditions,
+                    "step_lines": step_lines,
+                    "expected_outcome": tc.expected_outcome,
+                }
+            )
+
+        class_name = _slugify(self.context.project_name).title().replace("_", "")
+        suite_title = cases[0].title if len(cases) == 1 else f"{len(cases)} Test Cases"
+
         return self._template.render(
-            title=test_case.get("title", "Test"),
-            preconditions=test_case.get("preconditions", []),
-            steps=test_case.get("steps", []),
+            project_name=self.context.project_name,
+            suite_title=suite_title,
+            class_name=class_name or "Suite",
+            base_url=self.context.system_url,
+            test_cases=rendered_cases,
+            custom_imports=self.context.custom_imports,
         )
+
+    def validate_output(self, content: str) -> ValidationResult:
+        if not content.strip():
+            return ValidationResult.fail("Output is empty.")
+        try:
+            ast.parse(content)
+        except SyntaxError as exc:
+            return ValidationResult.fail(f"Python syntax error: {exc}")
+        errors: list[str] = []
+        if "def test_" not in content:
+            errors.append("No test_ functions found.")
+        if "webdriver" not in content:
+            errors.append("Missing webdriver import.")
+        return ValidationResult(is_valid=len(errors) == 0, errors=errors)

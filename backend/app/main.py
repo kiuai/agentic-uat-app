@@ -39,9 +39,10 @@ from app.routers import (
     requirements,
     tenants,
     test_cycles,
-    test_scripts,
     users,
 )
+from app.routers.test_scripts import combined_router as test_scripts_combined
+from app.routers.test_cycles import cycle_export_router
 
 logger = structlog.get_logger(__name__)
 
@@ -206,8 +207,10 @@ def _add_routers(app: FastAPI) -> None:
     app.include_router(users.router, prefix=prefix, tags=["Users"])
     app.include_router(projects.router, prefix=prefix, tags=["Projects"])
     app.include_router(requirements.router, prefix=prefix, tags=["Requirements"])
-    app.include_router(test_scripts.router, prefix=prefix, tags=["Test Scripts"])
+    # test_scripts_combined aggregates project-scoped CRUD + export sub-router
+    app.include_router(test_scripts_combined, prefix=prefix, tags=["Test Scripts"])
     app.include_router(test_cycles.router, prefix=prefix, tags=["Test Cycles"])
+    app.include_router(cycle_export_router, prefix=prefix, tags=["Test Cycles"])
     app.include_router(ai_generation.router, prefix=prefix, tags=["AI Generation"])
     app.include_router(crawler.router, prefix=prefix, tags=["Crawler"])
     app.include_router(reports.router, prefix=prefix, tags=["Reports"])

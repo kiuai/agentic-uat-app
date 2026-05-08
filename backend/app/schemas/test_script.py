@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -67,7 +68,25 @@ class ExportResponse(BaseModel):
     format: ScriptFormat
     content: str
     blob_uri: str | None = None
+    download_url: str | None = None
     expires_at: datetime | None = None
+    validation_errors: list[str] = []
+
+
+class BulkExportRequest(BaseModel):
+    script_ids: list[uuid.UUID] = Field(min_length=1, max_length=50)
+    format: ScriptFormat
+    project_name: str = "KAATS"
+    system_url: str = ""
+
+
+class BulkExportResponse(BaseModel):
+    format: ScriptFormat
+    blob_uri: str | None
+    download_url: str | None
+    expires_at: datetime | None
+    file_count: int
+    generated_at: datetime
 
 
 # ---------------------------------------------------------------------------
