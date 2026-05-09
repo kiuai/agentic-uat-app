@@ -12,9 +12,10 @@ concurrency:
 
 permissions:
   contents: read
-  id-token: write       # Required for OIDC login to Azure
-  packages: write       # Required for GHCR (if used)
-  attestations: write   # Required for image signing / SBOM attestation
+  id-token: write        # Required for OIDC login to Azure
+  packages: write        # Required for GHCR (if used)
+  attestations: write    # Required for image signing / SBOM attestation
+  security-events: write # Required for Trivy SARIF upload to GitHub Security
 
 jobs:
   build-and-push:
@@ -171,28 +172,28 @@ jobs:
 
       - name: Upload Trivy SARIF
         uses: github/codeql-action/upload-sarif@v3
-        if: always()
+        if: always() && hashFiles('trivy-api.sarif') != ''
         with:
           sarif_file: trivy-api.sarif
           category: trivy-api
 
       # ── Update staging Container Apps ───────────────────────────────────────
 
-      - name: Update staging Container Apps (auto-deploy on main)
+      - name: Update dev Container Apps (auto-deploy on main)
         if: github.ref == 'refs/heads/main'
         run: |
           SHORT_SHA="${{ steps.vars.outputs.short-sha }}"
-          RG="rg-kaats-staging"
+          RG="rg-kaats-dev"
           ACR="${{ secrets.ACR_LOGIN_SERVER }}"
 
-          for app in kaats-staging-api kaats-staging-worker kaats-staging-frontend; do
-            image_name="${app##*-}"  # strip "kaats-staging-" prefix → api/worker/frontend
+          for app in kaats-dev-api kaats-dev-worker kaats-dev-frontend; do
+            image_name="${app##*kaats-dev-}"  # strip "kaats-dev-" prefix → api/worker/frontend
             az containerapp update \
               --name "${app}" \
               --resource-group "${RG}" \
               --image "${ACR}/kaats-${image_name}:${SHORT_SHA}" \
               --output none
-            echo "Updated ${app} → ${image_name}:${SHORT_SHA}"
+            echo "Updated ${app} → kaats-${image_name}:${SHORT_SHA}"
           done
 
       - name: Summary
