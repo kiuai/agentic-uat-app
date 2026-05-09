@@ -23,6 +23,9 @@ param appName string = 'kaats'
 @description('Image tag to deploy across all container apps')
 param imageTag string = 'latest'
 
+@description('Bootstrap mode: use placeholder image on first deploy before ACR images exist')
+param bootstrapMode bool = false
+
 @description('Azure AD Application (client) ID for MSAL authentication')
 param azureAdClientId string
 
@@ -188,8 +191,6 @@ module serviceBus 'modules/service-bus.bicep' = {
     location: location
     namePrefix: namePrefix
     identityPrincipalId: identity.outputs.principalId
-    privateEndpointsSubnetId: networking.outputs.privateEndpointsSubnetId
-    dnsZoneId: networking.outputs.dnsZoneIds.serviceBus
     tags: tags
   }
 }
@@ -304,6 +305,7 @@ module containerApps 'modules/container-apps.bicep' = {
     apiMaxReplicas: apiMaxReplicas
     workerMinReplicas: workerMinReplicas
     workerMaxReplicas: workerMaxReplicas
+    bootstrapMode: bootstrapMode
     tags: tags
   }
 }

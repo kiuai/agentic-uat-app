@@ -2,6 +2,9 @@
 // Standard tier namespace with two queues:
 //   - ai-generation  : triggers AI test script generation jobs
 //   - crawler        : triggers web crawler jobs
+//
+// Note: Standard tier does not support private endpoints (Premium only).
+// Public network access is enabled; traffic is secured via SAS/RBAC auth.
 
 @description('Azure region')
 param location string
@@ -12,19 +15,13 @@ param namePrefix string
 @description('Managed identity principal ID to grant Azure Service Bus Data Owner')
 param identityPrincipalId string
 
-@description('Private endpoints subnet resource ID')
-param privateEndpointsSubnetId string
-
-@description('Private DNS zone resource ID for Service Bus')
-param dnsZoneId string
-
 @description('Tags to apply to all resources')
 param tags object = {}
 
 // ── Namespace ─────────────────────────────────────────────────────────────────
 
 resource ns 'Microsoft.ServiceBus/namespaces@2022-10-01-preview' = {
-  name: '${namePrefix}-sb'
+  name: '${namePrefix}-bus'
   location: location
   sku: {
     name: 'Standard'
@@ -33,7 +30,7 @@ resource ns 'Microsoft.ServiceBus/namespaces@2022-10-01-preview' = {
   tags: tags
   properties: {
     minimumTlsVersion: '1.2'
-    publicNetworkAccess: 'Disabled'
+    publicNetworkAccess: 'Enabled'  // Standard tier does not support private endpoints
     disableLocalAuth: false  // Keep SAS for connection-string auth pattern
   }
 }
@@ -45,7 +42,7 @@ resource aiQueue 'Microsoft.ServiceBus/namespaces/queues@2022-10-01-preview' = {
   name: 'ai-generation'
   properties: {
     maxDeliveryCount: 5
-    lockDuration: 'PT5M'
+    lockDuration: 'PT5M'  // Standard tier max = 5 min
     defaultMessageTimeToLive: 'P1D'
     deadLetteringOnMessageExpiration: true
     enablePartitioning: false
@@ -57,7 +54,7 @@ resource crawlerQueue 'Microsoft.ServiceBus/namespaces/queues@2022-10-01-preview
   name: 'crawler'
   properties: {
     maxDeliveryCount: 3
-    lockDuration: 'PT10M'
+    lockDuration: 'PT5M'  // Standard tier max = 5 min
     defaultMessageTimeToLive: 'P1D'
     deadLetteringOnMessageExpiration: true
     enablePartitioning: false
@@ -83,38 +80,6 @@ resource sbRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
 resource rootRule 'Microsoft.ServiceBus/namespaces/AuthorizationRules@2022-10-01-preview' existing = {
   parent: ns
   name: 'RootManageSharedAccessKey'
-}
-
-// ── Private Endpoint ──────────────────────────────────────────────────────────
-
-resource pe 'Microsoft.Network/privateEndpoints@2023-09-01' = {
-  name: '${namePrefix}-sb-pe'
-  location: location
-  tags: tags
-  properties: {
-    subnet: { id: privateEndpointsSubnetId }
-    privateLinkServiceConnections: [
-      {
-        name: '${namePrefix}-sb-plsc'
-        properties: {
-          privateLinkServiceId: ns.id
-          groupIds: ['namespace']
-        }
-      }
-    ]
-  }
-
-  resource dnsGroup 'privateDnsZoneGroups' = {
-    name: 'default'
-    properties: {
-      privateDnsZoneConfigs: [
-        {
-          name: 'config'
-          properties: { privateDnsZoneId: dnsZoneId }
-        }
-      ]
-    }
-  }
 }
 
 // ── Outputs ──────────────────────────────────────────────────────────────────

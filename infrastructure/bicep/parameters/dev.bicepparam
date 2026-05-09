@@ -9,7 +9,7 @@ param appName = 'kaats'
 param imageTag = 'latest'
 
 // Set to your Azure AD app registration client ID
-param azureAdClientId = '00000000-0000-0000-0000-000000000000'
+param azureAdClientId = '3b6d0f72-476a-4735-a592-afa40ce77aca'
 
 // SQL: serverless, auto-pause after 60 min, 1–2 vCores
 param sqlMinVCores = 1
@@ -28,6 +28,9 @@ param keyVaultSoftDeleteDays = 7
 // OpenAI: minimal capacity
 param openAiGpt4oCapacity = 10
 param openAiEmbeddingCapacity = 30
+
+// Bootstrap: use placeholder image on first deploy (no images in ACR yet)
+param bootstrapMode = true
 
 // Container scaling: always-on 1 replica
 param apiMinReplicas = 1

@@ -1,6 +1,10 @@
 // ── Container Apps: api, worker, frontend ────────────────────────────────────
 // All three apps share the same environment and managed identity.
 // Secrets are pulled from Key Vault via managed identity references.
+//
+// bootstrapMode: when true, uses a public placeholder image so the initial
+// infrastructure deployment succeeds before any images exist in ACR.
+// CI/CD will update to real images on the first build.
 
 @description('Azure region')
 param location string
@@ -44,12 +48,73 @@ param workerMinReplicas int = 1
 @description('Maximum replicas for worker container app')
 param workerMaxReplicas int = 5
 
+@description('Bootstrap mode: use public placeholder image instead of ACR images. Set true on first deploy before images exist.')
+param bootstrapMode bool = false
+
 @description('Tags to apply to all resources')
 param tags object = {}
 
+// ── Image resolution ──────────────────────────────────────────────────────────
+// During bootstrap, use a public hello-world image so the Container App
+// resource can be created before real images are pushed to ACR.
+
+var placeholderImage = 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
+var apiImage    = bootstrapMode ? placeholderImage : '${acrLoginServer}/kaats-api:${imageTag}'
+var workerImage = bootstrapMode ? placeholderImage : '${acrLoginServer}/kaats-worker:${imageTag}'
+var frontendImage = bootstrapMode ? placeholderImage : '${acrLoginServer}/kaats-frontend:${imageTag}'
+
+// ── Registry config (omitted in bootstrap mode — public images need no auth) ──
+
+var registryConfig = bootstrapMode ? [] : [
+  {
+    server: acrLoginServer
+    identity: identityId
+  }
+]
+
+// ── Secrets (omitted in bootstrap mode) ──────────────────────────────────────
+
+var kvSecrets = bootstrapMode ? [] : [
+  {
+    name: 'database-url'
+    keyVaultUrl: '${keyVaultUri}secrets/database-url'
+    identity: identityId
+  }
+  {
+    name: 'cosmos-endpoint'
+    keyVaultUrl: '${keyVaultUri}secrets/cosmos-endpoint'
+    identity: identityId
+  }
+  {
+    name: 'cosmos-key'
+    keyVaultUrl: '${keyVaultUri}secrets/cosmos-key'
+    identity: identityId
+  }
+  {
+    name: 'service-bus-connection-string'
+    keyVaultUrl: '${keyVaultUri}secrets/service-bus-connection-string'
+    identity: identityId
+  }
+  {
+    name: 'storage-connection-string'
+    keyVaultUrl: '${keyVaultUri}secrets/storage-connection-string'
+    identity: identityId
+  }
+  {
+    name: 'openai-api-key'
+    keyVaultUrl: '${keyVaultUri}secrets/openai-api-key'
+    identity: identityId
+  }
+  {
+    name: 'appinsights-connection-string'
+    keyVaultUrl: '${keyVaultUri}secrets/appinsights-connection-string'
+    identity: identityId
+  }
+]
+
 // ── Shared environment variables (non-secret) ─────────────────────────────────
 
-var sharedEnv = [
+var sharedEnv = bootstrapMode ? [] : [
   { name: 'AZURE_CLIENT_ID', value: identityClientId }
   { name: 'AZURE_TENANT_ID', value: tenantId }
   { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', secretRef: 'appinsights-connection-string' }
@@ -73,7 +138,7 @@ resource api 'Microsoft.App/containerApps@2023-11-02-preview' = {
       activeRevisionsMode: 'Single'
       ingress: {
         external: true
-        targetPort: 8000
+        targetPort: bootstrapMode ? 80 : 8000
         transport: 'http'
         corsPolicy: {
           allowedOrigins: ['*']
@@ -82,60 +147,19 @@ resource api 'Microsoft.App/containerApps@2023-11-02-preview' = {
           allowCredentials: false
         }
       }
-      registries: [
-        {
-          server: acrLoginServer
-          identity: identityId
-        }
-      ]
-      secrets: [
-        {
-          name: 'database-url'
-          keyVaultUrl: '${keyVaultUri}secrets/database-url'
-          identity: identityId
-        }
-        {
-          name: 'cosmos-endpoint'
-          keyVaultUrl: '${keyVaultUri}secrets/cosmos-endpoint'
-          identity: identityId
-        }
-        {
-          name: 'cosmos-key'
-          keyVaultUrl: '${keyVaultUri}secrets/cosmos-key'
-          identity: identityId
-        }
-        {
-          name: 'service-bus-connection-string'
-          keyVaultUrl: '${keyVaultUri}secrets/service-bus-connection-string'
-          identity: identityId
-        }
-        {
-          name: 'storage-connection-string'
-          keyVaultUrl: '${keyVaultUri}secrets/storage-connection-string'
-          identity: identityId
-        }
-        {
-          name: 'openai-api-key'
-          keyVaultUrl: '${keyVaultUri}secrets/openai-api-key'
-          identity: identityId
-        }
-        {
-          name: 'appinsights-connection-string'
-          keyVaultUrl: '${keyVaultUri}secrets/appinsights-connection-string'
-          identity: identityId
-        }
-      ]
+      registries: registryConfig
+      secrets: kvSecrets
     }
     template: {
       containers: [
         {
           name: 'api'
-          image: '${acrLoginServer}/kaats-api:${imageTag}'
+          image: apiImage
           resources: {
             cpu: json('0.5')
             memory: '1Gi'
           }
-          env: union(sharedEnv, [
+          env: union(sharedEnv, bootstrapMode ? [] : [
             { name: 'DATABASE_URL', secretRef: 'database-url' }
             { name: 'COSMOS_ENDPOINT', secretRef: 'cosmos-endpoint' }
             { name: 'COSMOS_KEY', secretRef: 'cosmos-key' }
@@ -145,32 +169,12 @@ resource api 'Microsoft.App/containerApps@2023-11-02-preview' = {
             { name: 'AZURE_AD_TENANT_ID', value: tenantId }
             { name: 'AZURE_AD_CLIENT_ID', value: azureClientId }
           ])
-          probes: [
-            {
-              type: 'Liveness'
-              httpGet: {
-                path: '/health'
-                port: 8000
-              }
-              initialDelaySeconds: 10
-              periodSeconds: 30
-            }
-            {
-              type: 'Readiness'
-              httpGet: {
-                path: '/health'
-                port: 8000
-              }
-              initialDelaySeconds: 5
-              periodSeconds: 10
-            }
-          ]
         }
       ]
       scale: {
         minReplicas: apiMinReplicas
         maxReplicas: apiMaxReplicas
-        rules: [
+        rules: bootstrapMode ? [] : [
           {
             name: 'http-scaling'
             http: {
@@ -202,60 +206,19 @@ resource worker 'Microsoft.App/containerApps@2023-11-02-preview' = {
     configuration: {
       activeRevisionsMode: 'Single'
       // No ingress — worker only consumes Service Bus
-      registries: [
-        {
-          server: acrLoginServer
-          identity: identityId
-        }
-      ]
-      secrets: [
-        {
-          name: 'database-url'
-          keyVaultUrl: '${keyVaultUri}secrets/database-url'
-          identity: identityId
-        }
-        {
-          name: 'cosmos-endpoint'
-          keyVaultUrl: '${keyVaultUri}secrets/cosmos-endpoint'
-          identity: identityId
-        }
-        {
-          name: 'cosmos-key'
-          keyVaultUrl: '${keyVaultUri}secrets/cosmos-key'
-          identity: identityId
-        }
-        {
-          name: 'service-bus-connection-string'
-          keyVaultUrl: '${keyVaultUri}secrets/service-bus-connection-string'
-          identity: identityId
-        }
-        {
-          name: 'storage-connection-string'
-          keyVaultUrl: '${keyVaultUri}secrets/storage-connection-string'
-          identity: identityId
-        }
-        {
-          name: 'openai-api-key'
-          keyVaultUrl: '${keyVaultUri}secrets/openai-api-key'
-          identity: identityId
-        }
-        {
-          name: 'appinsights-connection-string'
-          keyVaultUrl: '${keyVaultUri}secrets/appinsights-connection-string'
-          identity: identityId
-        }
-      ]
+      registries: registryConfig
+      secrets: kvSecrets
     }
     template: {
       containers: [
         {
           name: 'worker'
-          image: '${acrLoginServer}/kaats-worker:${imageTag}'
+          image: workerImage
           resources: {
             cpu: json('1.0')
             memory: '2Gi'
           }
-          env: union(sharedEnv, [
+          env: union(sharedEnv, bootstrapMode ? [] : [
             { name: 'DATABASE_URL', secretRef: 'database-url' }
             { name: 'COSMOS_ENDPOINT', secretRef: 'cosmos-endpoint' }
             { name: 'COSMOS_KEY', secretRef: 'cosmos-key' }
@@ -268,7 +231,7 @@ resource worker 'Microsoft.App/containerApps@2023-11-02-preview' = {
       scale: {
         minReplicas: workerMinReplicas
         maxReplicas: workerMaxReplicas
-        rules: [
+        rules: bootstrapMode ? [] : [
           {
             name: 'servicebus-scaling'
             custom: {
@@ -312,23 +275,18 @@ resource frontend 'Microsoft.App/containerApps@2023-11-02-preview' = {
         targetPort: 80
         transport: 'http'
       }
-      registries: [
-        {
-          server: acrLoginServer
-          identity: identityId
-        }
-      ]
+      registries: registryConfig
     }
     template: {
       containers: [
         {
           name: 'frontend'
-          image: '${acrLoginServer}/kaats-frontend:${imageTag}'
+          image: frontendImage
           resources: {
             cpu: json('0.25')
             memory: '0.5Gi'
           }
-          env: [
+          env: bootstrapMode ? [] : [
             { name: 'VITE_AZURE_CLIENT_ID', value: azureClientId }
             { name: 'VITE_AZURE_TENANT_ID', value: tenantId }
             { name: 'VITE_API_BASE_URL', value: 'https://${api.properties.configuration.ingress.fqdn}' }
@@ -338,7 +296,7 @@ resource frontend 'Microsoft.App/containerApps@2023-11-02-preview' = {
       scale: {
         minReplicas: 1
         maxReplicas: 3
-        rules: [
+        rules: bootstrapMode ? [] : [
           {
             name: 'http-scaling'
             http: {
