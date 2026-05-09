@@ -102,8 +102,34 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
-addopts = "--cov=app --cov-report=term-missing --cov-fail-under=70"
+addopts = "--cov=app --cov-report=term-missing --cov-report=xml:coverage.xml --cov-report=html:htmlcov --cov-fail-under=80"
+markers = [
+    "unit: unit tests (no external dependencies)",
+    "integration: integration tests (requires database)",
+    "e2e: end-to-end tests (requires running services)",
+    "slow: tests that take > 5 seconds",
+]
 
 [tool.coverage.run]
 source = ["app"]
 omit = ["tests/*", "migrations/*"]
+
+[tool.coverage.report]
+# 100% coverage required for security/correctness-critical modules
+fail_under = 80
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+]
+
+[tool.coverage.paths]
+source = ["app"]
+
+# Per-module coverage requirements are enforced via the CI workflow using
+# pytest-cov's --cov-fail-under for specific paths.  Run individually:
+#   pytest --cov=app/auth --cov-fail-under=100 tests/unit/test_rbac.py tests/unit/test_tenant_isolation.py
+#   pytest --cov=app/middleware --cov-fail-under=100 tests/unit/test_tenant_isolation.py
+#   pytest --cov=app/exporters --cov-fail-under=100 tests/unit/test_exporters.py
