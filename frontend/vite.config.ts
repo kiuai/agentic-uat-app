@@ -22,6 +22,7 @@ export default defineConfig({
   build: {
     outDir: "dist",
     sourcemap: false,
+    target: "es2022",  // Required for top-level await used by Azure/MSAL dependencies
     rollupOptions: {
       output: {
         manualChunks: {
