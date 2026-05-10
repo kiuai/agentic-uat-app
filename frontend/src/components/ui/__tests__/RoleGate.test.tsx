@@ -18,7 +18,7 @@ import { RoleGate } from "../RoleGate";
 // Mock usePermission hook — avoids full store setup
 // ---------------------------------------------------------------------------
 
-const mockUsePermission = vi.fn<[string], boolean>();
+const mockUsePermission = vi.fn<(permission: string) => boolean>();
 
 vi.mock("@/hooks/usePermission", () => ({
   usePermission: (permission: string) => mockUsePermission(permission),
