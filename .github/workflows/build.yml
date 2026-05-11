@@ -186,13 +186,30 @@ jobs:
           RG="rg-kaats-dev"
           ACR="${{ secrets.ACR_LOGIN_SERVER }}"
 
+          # Resolve managed identity resource ID (needed for ACR pull auth)
+          IDENTITY_ID=$(az identity show \
+            --name kaats-dev-id \
+            --resource-group "${RG}" \
+            --query id -o tsv)
+
           for app in kaats-dev-api kaats-dev-worker kaats-dev-frontend; do
             image_name="${app##*kaats-dev-}"  # strip "kaats-dev-" prefix → api/worker/frontend
+
+            # Ensure registry is configured with managed identity pull
+            az containerapp registry set \
+              --name "${app}" \
+              --resource-group "${RG}" \
+              --server "${ACR}" \
+              --identity "${IDENTITY_ID}" \
+              --output none
+
+            # Update image
             az containerapp update \
               --name "${app}" \
               --resource-group "${RG}" \
               --image "${ACR}/kaats-${image_name}:${SHORT_SHA}" \
               --output none
+
             echo "Updated ${app} → kaats-${image_name}:${SHORT_SHA}"
           done
 
