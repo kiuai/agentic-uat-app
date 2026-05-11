@@ -72,7 +72,7 @@ async def upload_requirement(
     file: UploadFile = File(...),
     title: str = Form(...),
     business_domain: str | None = Form(None),
-    db: TenantDB = Depends(),
+    db: TenantDB,
     current_user: CurrentUserDep,
 ) -> RequirementRead:
     service = RequirementService(db)

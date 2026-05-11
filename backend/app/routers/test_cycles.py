@@ -213,7 +213,7 @@ async def upload_evidence(
     cycle_id: uuid.UUID,
     exec_id: uuid.UUID,
     file: UploadFile = File(...),
-    db: TenantDB = Depends(),
+    db: TenantDB,
     current_user: CurrentUserDep,
 ) -> EvidenceRead:
     service = TestCycleService(db)
