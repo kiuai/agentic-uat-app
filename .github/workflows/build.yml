@@ -183,17 +183,17 @@ jobs:
         if: github.ref == 'refs/heads/main'
         run: |
           SHORT_SHA="${{ steps.vars.outputs.short-sha }}"
-          RG="rg-kaats-dev"
+          RG="rg-kaatsv2-dev"
           ACR="${{ secrets.ACR_LOGIN_SERVER }}"
 
           # Resolve managed identity resource ID (needed for ACR pull auth)
           IDENTITY_ID=$(az identity show \
-            --name kaats-dev-id \
+            --name kaatsv2-dev-id \
             --resource-group "${RG}" \
             --query id -o tsv)
 
-          for app in kaats-dev-api kaats-dev-worker kaats-dev-frontend; do
-            image_name="${app##*kaats-dev-}"  # strip "kaats-dev-" prefix → api/worker/frontend
+          for app in kaatsv2-dev-api kaatsv2-dev-worker kaatsv2-dev-frontend; do
+            image_name="${app##*kaatsv2-dev-}"  # strip "kaatsv2-dev-" prefix → api/worker/frontend
 
             # Ensure registry is configured with managed identity pull
             az containerapp registry set \
