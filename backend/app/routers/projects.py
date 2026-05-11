@@ -26,7 +26,7 @@ router = APIRouter(prefix="/projects")
     response_model=list[ProjectRead],
     dependencies=[Depends(RequirePermission(Permission.PROJECT_READ))],
 )
-async def list_projects(db: TenantDB, current_user: CurrentUser) -> list[ProjectRead]:
+async def list_projects(db: TenantDB, current_user: CurrentUserDep) -> list[ProjectRead]:
     service = ProjectService(db)
     return await service.list_projects(current_user.tenant_id)
 
