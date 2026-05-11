@@ -7,7 +7,7 @@ import uuid
 from fastapi import APIRouter, Depends, status
 
 from app.auth.permissions import Permission
-from app.dependencies import CurrentUser, RequirePermission, TenantDB
+from app.dependencies import CurrentUser, CurrentUserDep, RequirePermission, TenantDB
 from app.schemas.project import (
     EnvironmentCreate,
     EnvironmentRead,
@@ -38,7 +38,7 @@ async def list_projects(db: TenantDB, current_user: CurrentUser) -> list[Project
     dependencies=[Depends(RequirePermission(Permission.PROJECT_CREATE))],
 )
 async def create_project(
-    body: ProjectCreate, db: TenantDB, current_user: CurrentUser
+    body: ProjectCreate, db: TenantDB, current_user: CurrentUserDep
 ) -> ProjectRead:
     service = ProjectService(db)
     return await service.create_project(current_user.tenant_id, current_user.id, body)
@@ -83,7 +83,7 @@ async def delete_project(project_id: uuid.UUID, db: TenantDB) -> None:
     summary="Live dashboard with requirement, script, cycle and execution counts",
 )
 async def get_project_dashboard(
-    project_id: uuid.UUID, db: TenantDB, current_user: CurrentUser
+    project_id: uuid.UUID, db: TenantDB, current_user: CurrentUserDep
 ) -> ProjectDashboard:
     service = ProjectService(db)
     return await service.get_dashboard(project_id, current_user.tenant_id)
@@ -97,7 +97,7 @@ async def get_project_dashboard(
     dependencies=[Depends(RequirePermission(Permission.ENVIRONMENT_READ))],
 )
 async def list_environments(
-    project_id: uuid.UUID, db: TenantDB, current_user: CurrentUser
+    project_id: uuid.UUID, db: TenantDB, current_user: CurrentUserDep
 ) -> list[EnvironmentRead]:
     service = ProjectService(db)
     return await service.list_environments(project_id, current_user.tenant_id)
@@ -110,7 +110,7 @@ async def list_environments(
     dependencies=[Depends(RequirePermission(Permission.ENVIRONMENT_MANAGE))],
 )
 async def create_environment(
-    project_id: uuid.UUID, body: EnvironmentCreate, db: TenantDB, current_user: CurrentUser
+    project_id: uuid.UUID, body: EnvironmentCreate, db: TenantDB, current_user: CurrentUserDep
 ) -> EnvironmentRead:
     service = ProjectService(db)
     return await service.create_environment(project_id, current_user.tenant_id, body)

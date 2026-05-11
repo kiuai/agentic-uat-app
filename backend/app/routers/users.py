@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, Query, status
 from pydantic import BaseModel, EmailStr, Field
 
 from app.auth.permissions import Permission
-from app.dependencies import CurrentUser, RequirePermission, TenantDB
+from app.dependencies import CurrentUser, CurrentUserDep, RequirePermission, TenantDB
 from app.models.user import RoleCode
 from app.schemas.user import (
     RoleAssignmentCreate,
@@ -31,7 +31,7 @@ router = APIRouter(prefix="/users")
 )
 async def list_users(
     db: TenantDB,
-    current_user: CurrentUser,
+    current_user: CurrentUserDep,
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
 ) -> list[UserResponse]:
@@ -45,7 +45,7 @@ async def list_users(
     dependencies=[Depends(RequirePermission(Permission.USER_READ))],
 )
 async def get_user(
-    user_id: uuid.UUID, db: TenantDB, current_user: CurrentUser
+    user_id: uuid.UUID, db: TenantDB, current_user: CurrentUserDep
 ) -> UserResponse:
     service = UserService(db)
     return await service.get_user(user_id, current_user.tenant_id)
@@ -60,7 +60,7 @@ async def get_user(
     dependencies=[Depends(RequirePermission(Permission.USER_CREATE))],
 )
 async def create_user(
-    body: UserCreate, db: TenantDB, current_user: CurrentUser
+    body: UserCreate, db: TenantDB, current_user: CurrentUserDep
 ) -> UserResponse:
     service = UserService(db)
     return await service.create_user(current_user.tenant_id, body, current_user.id)
@@ -82,7 +82,7 @@ class InviteRequest(BaseModel):
     summary="Invite a user by email; creates a pending account until first SSO login",
 )
 async def invite_user(
-    body: InviteRequest, db: TenantDB, current_user: CurrentUser
+    body: InviteRequest, db: TenantDB, current_user: CurrentUserDep
 ) -> dict:
     service = UserService(db)
     return await service.invite_user(
@@ -127,7 +127,7 @@ async def deactivate_user(user_id: uuid.UUID, db: TenantDB) -> None:
     dependencies=[Depends(RequirePermission(Permission.USER_READ))],
 )
 async def list_user_roles(
-    user_id: uuid.UUID, db: TenantDB, current_user: CurrentUser
+    user_id: uuid.UUID, db: TenantDB, current_user: CurrentUserDep
 ) -> list[RoleAssignmentResponse]:
     service = UserService(db)
     return await service.list_roles(user_id, current_user.tenant_id)
@@ -143,7 +143,7 @@ async def assign_role(
     user_id: uuid.UUID,
     body: RoleAssignmentCreate,
     db: TenantDB,
-    current_user: CurrentUser,
+    current_user: CurrentUserDep,
 ) -> RoleAssignmentResponse:
     service = UserService(db)
     return await service.assign_role(user_id, current_user.tenant_id, body, current_user.id)
@@ -158,7 +158,7 @@ async def revoke_role(
     user_id: uuid.UUID,
     role: RoleCode,
     db: TenantDB,
-    current_user: CurrentUser,
+    current_user: CurrentUserDep,
     domain_code: str | None = Query(None),
 ) -> None:
     service = UserService(db)

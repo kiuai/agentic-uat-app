@@ -7,7 +7,7 @@ import uuid
 from fastapi import APIRouter, Depends, File, Query, UploadFile, status
 
 from app.auth.permissions import Permission
-from app.dependencies import CurrentUser, CosmosDep, RequirePermission, TenantDB
+from app.dependencies import CurrentUser, CurrentUserDep, CosmosDep, RequirePermission, TenantDB
 from app.exporters.base import ExportFormat
 from app.models.test_script import ScriptFormat
 from app.schemas.test_cycle import (
@@ -36,7 +36,7 @@ router = APIRouter(prefix="/projects/{project_id}/cycles")
     dependencies=[Depends(RequirePermission(Permission.CYCLE_READ))],
 )
 async def list_cycles(
-    project_id: uuid.UUID, db: TenantDB, current_user: CurrentUser
+    project_id: uuid.UUID, db: TenantDB, current_user: CurrentUserDep
 ) -> list[TestCycleRead]:
     service = TestCycleService(db)
     return await service.list_cycles(project_id, current_user.tenant_id)
@@ -49,7 +49,7 @@ async def list_cycles(
     dependencies=[Depends(RequirePermission(Permission.CYCLE_CREATE))],
 )
 async def create_cycle(
-    project_id: uuid.UUID, body: TestCycleCreate, db: TenantDB, current_user: CurrentUser
+    project_id: uuid.UUID, body: TestCycleCreate, db: TenantDB, current_user: CurrentUserDep
 ) -> TestCycleRead:
     service = TestCycleService(db)
     return await service.create_cycle(project_id, current_user.tenant_id, current_user.id, body)
@@ -126,7 +126,7 @@ async def add_execution(
     cycle_id: uuid.UUID,
     body: ExecutionCreate,
     db: TenantDB,
-    current_user: CurrentUser,
+    current_user: CurrentUserDep,
 ) -> TestAssignmentResponse:
     service = TestCycleService(db)
     return await service.add_execution(
@@ -146,7 +146,7 @@ async def bulk_assign(
     cycle_id: uuid.UUID,
     body: list[TestAssignmentCreate],
     db: TenantDB,
-    current_user: CurrentUser,
+    current_user: CurrentUserDep,
 ) -> list[TestAssignmentResponse]:
     service = TestCycleService(db)
     return await service.bulk_assign(
@@ -165,7 +165,7 @@ async def log_execution_result(
     exec_id: uuid.UUID,
     body: ExecutionUpdate,
     db: TenantDB,
-    current_user: CurrentUser,
+    current_user: CurrentUserDep,
 ) -> TestAssignmentResponse:
     service = TestCycleService(db)
     return await service.log_result(
@@ -190,7 +190,7 @@ async def submit_result(
     exec_id: uuid.UUID,
     body: TestResultCreate,
     db: TenantDB,
-    current_user: CurrentUser,
+    current_user: CurrentUserDep,
 ) -> TestResultResponse:
     service = TestCycleService(db)
     return await service.submit_result(
@@ -214,7 +214,7 @@ async def upload_evidence(
     exec_id: uuid.UUID,
     file: UploadFile = File(...),
     db: TenantDB = Depends(),
-    current_user: CurrentUser = Depends(),
+    current_user: CurrentUserDep,
 ) -> EvidenceRead:
     service = TestCycleService(db)
     return await service.upload_evidence(
@@ -245,7 +245,7 @@ async def export_cycle(
     cycle_id: uuid.UUID,
     db: TenantDB,
     cosmos: CosmosDep,
-    current_user: CurrentUser,
+    current_user: CurrentUserDep,
     format: ScriptFormat = Query(..., description="Target export format"),
     project_name: str = Query("KAATS", description="Project name for generated file headers"),
     system_url: str = Query("", description="Base URL of the system under test"),

@@ -7,7 +7,7 @@ import uuid
 from fastapi import APIRouter, Depends, status
 
 from app.auth.permissions import Permission
-from app.dependencies import CurrentUser, RequirePermission, TenantDB
+from app.dependencies import CurrentUser, CurrentUserDep, RequirePermission, TenantDB
 from app.schemas.tenant import (
     BusinessDomainCreate,
     BusinessDomainResponse,
@@ -144,7 +144,7 @@ async def delete_company(company_id: uuid.UUID, db: TenantDB) -> None:
     dependencies=[Depends(RequirePermission(Permission.ADMIN_COMPANY))],
 )
 async def list_business_domains(
-    db: TenantDB, current_user: CurrentUser
+    db: TenantDB, current_user: CurrentUserDep
 ) -> list[BusinessDomainResponse]:
     service = TenantService(db)
     return await service.list_business_domains(current_user.tenant_id)
@@ -157,7 +157,7 @@ async def list_business_domains(
     dependencies=[Depends(RequirePermission(Permission.ADMIN_COMPANY))],
 )
 async def create_business_domain(
-    body: BusinessDomainCreate, db: TenantDB, current_user: CurrentUser
+    body: BusinessDomainCreate, db: TenantDB, current_user: CurrentUserDep
 ) -> BusinessDomainResponse:
     service = TenantService(db)
     return await service.create_business_domain(current_user.tenant_id, body)

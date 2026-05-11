@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, status
 from fastapi.responses import StreamingResponse
 
 from app.auth.permissions import Permission
-from app.dependencies import CurrentUser, RequirePermission, TenantDB
+from app.dependencies import CurrentUser, CurrentUserDep, RequirePermission, TenantDB
 from app.schemas.ai_generation import GenerationJobRequest
 from app.schemas.job import JobRead
 from app.services.ai_generation_service import AIGenerationService
@@ -26,7 +26,7 @@ async def trigger_generation(
     project_id: uuid.UUID,
     body: GenerationJobRequest,
     db: TenantDB,
-    current_user: CurrentUser,
+    current_user: CurrentUserDep,
 ) -> JobRead:
     service = AIGenerationService(db)
     return await service.create_generation_job(
@@ -40,7 +40,7 @@ async def trigger_generation(
     dependencies=[Depends(RequirePermission(Permission.AI_GENERATE))],
 )
 async def list_generation_jobs(
-    project_id: uuid.UUID, db: TenantDB, current_user: CurrentUser
+    project_id: uuid.UUID, db: TenantDB, current_user: CurrentUserDep
 ) -> list[JobRead]:
     service = AIGenerationService(db)
     return await service.list_jobs(project_id, current_user.tenant_id)
@@ -76,7 +76,7 @@ generic_router = APIRouter(prefix="/jobs")
 
 
 @generic_router.get("/{job_id}", response_model=JobRead)
-async def get_job(job_id: uuid.UUID, db: TenantDB, current_user: CurrentUser) -> JobRead:
+async def get_job(job_id: uuid.UUID, db: TenantDB, current_user: CurrentUserDep) -> JobRead:
     """Universal job status endpoint for any job type."""
     service = AIGenerationService(db)
     return await service.get_job(job_id)

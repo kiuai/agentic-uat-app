@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
 from app.auth.permissions import Permission
-from app.dependencies import CurrentUser, RequirePermission, TenantDB
+from app.dependencies import CurrentUser, CurrentUserDep, RequirePermission, TenantDB
 
 router = APIRouter(prefix="/projects/{project_id}/reports")
 
@@ -65,7 +65,7 @@ class AIUsageReport(BaseModel):
     dependencies=[Depends(RequirePermission(Permission.REPORT_READ))],
 )
 async def project_summary(
-    project_id: uuid.UUID, db: TenantDB, current_user: CurrentUser
+    project_id: uuid.UUID, db: TenantDB, current_user: CurrentUserDep
 ) -> ProjectSummaryReport:
     from app.services.project_service import ProjectService
     service = ProjectService(db)
@@ -79,7 +79,7 @@ async def project_summary(
     summary="Script coverage — which requirements have generated test scripts",
 )
 async def script_coverage(
-    project_id: uuid.UUID, db: TenantDB, current_user: CurrentUser
+    project_id: uuid.UUID, db: TenantDB, current_user: CurrentUserDep
 ) -> ScriptCoverageReport:
     from sqlalchemy import func, select
     from app.models.requirement import Requirement
@@ -133,7 +133,7 @@ async def cycle_summary(
     project_id: uuid.UUID,
     cycle_id: uuid.UUID,
     db: TenantDB,
-    current_user: CurrentUser,
+    current_user: CurrentUserDep,
 ) -> CycleSummaryReport:
     from sqlalchemy import func, select
     from app.models.test_cycle import ExecutionStatus, TestAssignment, TestCycle
@@ -180,7 +180,7 @@ async def cycle_summary(
     summary="AI generation job counts and script output totals for this project",
 )
 async def ai_usage(
-    project_id: uuid.UUID, db: TenantDB, current_user: CurrentUser
+    project_id: uuid.UUID, db: TenantDB, current_user: CurrentUserDep
 ) -> AIUsageReport:
     from datetime import timezone
     from sqlalchemy import func, select

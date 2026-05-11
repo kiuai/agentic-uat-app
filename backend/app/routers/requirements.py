@@ -8,7 +8,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, File, Form, Query, UploadFile, status
 
 from app.auth.permissions import Permission
-from app.dependencies import CurrentUser, RequirePermission, TenantDB
+from app.dependencies import CurrentUser, CurrentUserDep, RequirePermission, TenantDB
 from app.models.requirement import RequirementStatus
 from app.schemas.requirement import RequirementCreate, RequirementRead, RequirementUpdate
 from app.services.requirement_service import RequirementService
@@ -24,7 +24,7 @@ router = APIRouter(prefix="/projects/{project_id}/requirements")
 async def list_requirements(
     project_id: uuid.UUID,
     db: TenantDB,
-    current_user: CurrentUser,
+    current_user: CurrentUserDep,
     status: RequirementStatus | None = Query(None),
     business_domain: str | None = Query(None),
     search: str | None = Query(None, max_length=255),
@@ -53,7 +53,7 @@ async def create_requirement(
     project_id: uuid.UUID,
     body: RequirementCreate,
     db: TenantDB,
-    current_user: CurrentUser,
+    current_user: CurrentUserDep,
 ) -> RequirementRead:
     service = RequirementService(db)
     return await service.create_requirement(
@@ -73,7 +73,7 @@ async def upload_requirement(
     title: str = Form(...),
     business_domain: str | None = Form(None),
     db: TenantDB = Depends(),
-    current_user: CurrentUser = Depends(),
+    current_user: CurrentUserDep,
 ) -> RequirementRead:
     service = RequirementService(db)
     return await service.upload_requirement(
@@ -139,7 +139,7 @@ async def generate_scripts(
     project_id: uuid.UUID,
     req_id: uuid.UUID,
     db: TenantDB,
-    current_user: CurrentUser,
+    current_user: CurrentUserDep,
     output_formats: list[str] = Query(
         default=["playwright_ts"],
         description="Script formats to generate",

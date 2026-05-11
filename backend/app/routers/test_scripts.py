@@ -7,7 +7,7 @@ import uuid
 from fastapi import APIRouter, Depends, Query, status
 
 from app.auth.permissions import Permission
-from app.dependencies import CurrentUser, CosmosDep, RequirePermission, TenantDB
+from app.dependencies import CurrentUser, CurrentUserDep, CosmosDep, RequirePermission, TenantDB
 from app.exporters.base import ExportFormat
 from app.models.test_script import ScriptFormat
 from app.schemas.test_script import (
@@ -37,7 +37,7 @@ router = APIRouter(prefix="/projects/{project_id}/test-scripts")
 async def list_scripts(
     project_id: uuid.UUID,
     cosmos: CosmosDep,
-    current_user: CurrentUser,
+    current_user: CurrentUserDep,
     status_filter: str | None = None,
     domain_code: str | None = None,
 ) -> list[TestScriptRead]:
@@ -57,7 +57,7 @@ async def create_script(
     project_id: uuid.UUID,
     body: TestScriptCreate,
     cosmos: CosmosDep,
-    current_user: CurrentUser,
+    current_user: CurrentUserDep,
 ) -> TestScriptRead:
     service = TestScriptService(cosmos)
     return await service.create_script(project_id, current_user.tenant_id, current_user.id, body)
@@ -69,7 +69,7 @@ async def create_script(
     dependencies=[Depends(RequirePermission(Permission.SCRIPT_READ))],
 )
 async def get_script(
-    project_id: uuid.UUID, script_id: str, cosmos: CosmosDep, current_user: CurrentUser
+    project_id: uuid.UUID, script_id: str, cosmos: CosmosDep, current_user: CurrentUserDep
 ) -> TestScriptRead:
     service = TestScriptService(cosmos)
     return await service.get_script(script_id, str(project_id), current_user)
@@ -85,7 +85,7 @@ async def update_script(
     script_id: str,
     body: TestScriptUpdate,
     cosmos: CosmosDep,
-    current_user: CurrentUser,
+    current_user: CurrentUserDep,
 ) -> TestScriptRead:
     service = TestScriptService(cosmos)
     return await service.update_script(script_id, str(project_id), body, current_user)
@@ -155,7 +155,7 @@ async def get_script_versions(
     dependencies=[Depends(RequirePermission(Permission.SCRIPT_UPDATE))],
 )
 async def submit_review(
-    project_id: uuid.UUID, script_id: str, cosmos: CosmosDep, current_user: CurrentUser
+    project_id: uuid.UUID, script_id: str, cosmos: CosmosDep, current_user: CurrentUserDep
 ) -> TestScriptRead:
     service = TestScriptService(cosmos)
     return await service.submit_for_review(script_id, str(project_id), current_user)
@@ -171,7 +171,7 @@ async def approve_script(
     script_id: str,
     body: ApprovalRequest,
     cosmos: CosmosDep,
-    current_user: CurrentUser,
+    current_user: CurrentUserDep,
 ) -> TestScriptRead:
     service = TestScriptService(cosmos)
     return await service.approve_script(script_id, str(project_id), current_user, body.comments)
@@ -187,7 +187,7 @@ async def reject_script(
     script_id: str,
     body: RejectionRequest,
     cosmos: CosmosDep,
-    current_user: CurrentUser,
+    current_user: CurrentUserDep,
 ) -> TestScriptRead:
     service = TestScriptService(cosmos)
     return await service.reject_script(script_id, str(project_id), current_user, body.comments)
@@ -205,7 +205,7 @@ async def export_script_legacy(
     script_id: str,
     body: ExportRequest,
     cosmos: CosmosDep,
-    current_user: CurrentUser,
+    current_user: CurrentUserDep,
 ) -> ExportResponse:
     service = TestScriptService(cosmos)
     return await service.export_script(script_id, str(project_id), body)
@@ -226,7 +226,7 @@ async def export_script(
     script_id: uuid.UUID,
     db: TenantDB,
     cosmos: CosmosDep,
-    current_user: CurrentUser,
+    current_user: CurrentUserDep,
     format: ScriptFormat = Query(..., description="Target export format"),
     project_name: str = Query("KAATS", description="Project name for generated file headers"),
     system_url: str = Query("", description="Base URL of the system under test"),
@@ -261,7 +261,7 @@ async def export_bulk(
     body: BulkExportRequest,
     db: TenantDB,
     cosmos: CosmosDep,
-    current_user: CurrentUser,
+    current_user: CurrentUserDep,
 ) -> BulkExportResponse:
     svc = ExportService(db, cosmos)
     result = await svc.export_bulk(

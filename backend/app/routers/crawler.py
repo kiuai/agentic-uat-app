@@ -15,7 +15,7 @@ import uuid
 from fastapi import APIRouter, Depends, status
 
 from app.auth.permissions import Permission
-from app.dependencies import CurrentUser, RequirePermission, TenantDB
+from app.dependencies import CurrentUser, CurrentUserDep, RequirePermission, TenantDB
 from app.schemas.crawl_job import CrawlJobCreate, CrawlJobResponse, CrawlPageResponse
 from app.services.crawler_service import CrawlerService
 
@@ -35,7 +35,7 @@ async def start_crawl(
     project_id: uuid.UUID,
     body: CrawlJobCreate,
     db: TenantDB,
-    current_user: CurrentUser,
+    current_user: CurrentUserDep,
 ) -> CrawlJobResponse:
     service = CrawlerService(db)
     return await service.start_crawl_job(
@@ -55,7 +55,7 @@ async def start_crawl(
 async def list_crawl_jobs(
     project_id: uuid.UUID,
     db: TenantDB,
-    current_user: CurrentUser,
+    current_user: CurrentUserDep,
 ) -> list[CrawlJobResponse]:
     service = CrawlerService(db)
     return await service.list_jobs(project_id, current_user.tenant_id)
@@ -89,7 +89,7 @@ async def get_crawl_job(
 async def get_crawl_pages(
     job_id: uuid.UUID,
     db: TenantDB,
-    current_user: CurrentUser,
+    current_user: CurrentUserDep,
 ) -> list[CrawlPageResponse]:
     service = CrawlerService(db)
     return await service.get_crawl_results(job_id, current_user.tenant_id)
@@ -104,7 +104,7 @@ async def get_crawl_pages(
 async def cancel_crawl_job(
     job_id: uuid.UUID,
     db: TenantDB,
-    current_user: CurrentUser,
+    current_user: CurrentUserDep,
 ) -> CrawlJobResponse:
     service = CrawlerService(db)
     return await service.cancel_job(job_id, current_user.tenant_id)
