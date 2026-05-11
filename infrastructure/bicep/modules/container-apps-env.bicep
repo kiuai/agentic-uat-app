@@ -29,7 +29,7 @@ resource env 'Microsoft.App/managedEnvironments@2023-11-02-preview' = {
   properties: {
     vnetConfiguration: {
       infrastructureSubnetId: subnetId
-      internal: true  // No public ingress at env level; apps expose individually
+      internal: false  // External load balancer — apps with external ingress get public FQDNs
     }
     appLogsConfiguration: {
       destination: 'log-analytics'
