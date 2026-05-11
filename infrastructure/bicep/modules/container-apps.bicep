@@ -76,6 +76,11 @@ var registryConfig = bootstrapMode ? [] : [
 
 var kvSecrets = bootstrapMode ? [] : [
   {
+    name: 'secret-key'
+    keyVaultUrl: '${keyVaultUri}secrets/secret-key'
+    identity: identityId
+  }
+  {
     name: 'database-url'
     keyVaultUrl: '${keyVaultUri}secrets/database-url'
     identity: identityId
@@ -160,6 +165,7 @@ resource api 'Microsoft.App/containerApps@2023-11-02-preview' = {
             memory: '1Gi'
           }
           env: union(sharedEnv, bootstrapMode ? [] : [
+            { name: 'SECRET_KEY', secretRef: 'secret-key' }
             { name: 'DATABASE_URL', secretRef: 'database-url' }
             { name: 'COSMOS_ENDPOINT', secretRef: 'cosmos-endpoint' }
             { name: 'COSMOS_KEY', secretRef: 'cosmos-key' }
@@ -219,6 +225,7 @@ resource worker 'Microsoft.App/containerApps@2023-11-02-preview' = {
             memory: '2Gi'
           }
           env: union(sharedEnv, bootstrapMode ? [] : [
+            { name: 'SECRET_KEY', secretRef: 'secret-key' }
             { name: 'DATABASE_URL', secretRef: 'database-url' }
             { name: 'COSMOS_ENDPOINT', secretRef: 'cosmos-endpoint' }
             { name: 'COSMOS_KEY', secretRef: 'cosmos-key' }

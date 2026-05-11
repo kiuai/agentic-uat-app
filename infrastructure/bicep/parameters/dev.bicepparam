@@ -29,8 +29,8 @@ param keyVaultSoftDeleteDays = 7
 param openAiGpt4oCapacity = 10
 param openAiEmbeddingCapacity = 30
 
-// Bootstrap: use placeholder image on first deploy (no images in ACR yet)
-param bootstrapMode = true
+// Bootstrap: disabled — images now exist in ACR
+param bootstrapMode = false
 
 // Container scaling: always-on 1 replica
 param apiMinReplicas = 1
