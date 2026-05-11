@@ -69,11 +69,11 @@ async def create_requirement(
 )
 async def upload_requirement(
     project_id: uuid.UUID,
+    db: TenantDB,
+    current_user: CurrentUserDep,
     file: UploadFile = File(...),
     title: str = Form(...),
     business_domain: str | None = Form(None),
-    db: TenantDB,
-    current_user: CurrentUserDep,
 ) -> RequirementRead:
     service = RequirementService(db)
     return await service.upload_requirement(

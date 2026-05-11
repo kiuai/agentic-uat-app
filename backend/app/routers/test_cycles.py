@@ -212,9 +212,9 @@ async def upload_evidence(
     project_id: uuid.UUID,
     cycle_id: uuid.UUID,
     exec_id: uuid.UUID,
-    file: UploadFile = File(...),
     db: TenantDB,
     current_user: CurrentUserDep,
+    file: UploadFile = File(...),
 ) -> EvidenceRead:
     service = TestCycleService(db)
     return await service.upload_evidence(
